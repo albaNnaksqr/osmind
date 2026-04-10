@@ -1,0 +1,29 @@
+# Copy to profile.yaml and fill in your values
+
+interests:
+  - RL post-training
+  - data synthesis
+  - SGLang inference optimization
+
+skills:
+  - Python
+  - distributed training
+
+resources:
+  gpus: "4x RTX 4090"
+  time: part-time
+
+watching:
+  - repo: THUDM/slime
+  - repo: sgl-project/sglang
+
+notes_vault: ~/workspace/Note   # path to your Obsidian vault
+
+llm:
+  base_url: http://localhost:30000/v1  # SGLang local, or https://api.openai.com/v1
+  model: Qwen3.5-27B
+  api_key: sk-your-key-here
+
+external_agents:
+  claude_code: claude
+  codex: codex
