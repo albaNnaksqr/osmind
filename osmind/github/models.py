@@ -12,6 +12,7 @@ class GHIssue:
     repo: str          # "owner/name"
     state: str         # "open" | "closed"
     score: float = 0.0  # filled by ranker
+    reason: str = ""
 
 
 @dataclass

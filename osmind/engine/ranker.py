@@ -34,5 +34,5 @@ class Ranker:
         for issue in issues:
             score, reason = self._score_issue(issue)
             issue.score = score
-            issue._reason = reason  # type: ignore[attr-defined]
+            issue.reason = reason
         return sorted(issues, key=lambda i: i.score, reverse=True)

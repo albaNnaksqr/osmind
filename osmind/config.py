@@ -38,7 +38,7 @@ class Config:
             if field not in data:
                 raise ConfigError(f"Missing required field: {field}")
         llm = data["llm"]
-        agents = data.get("external_agents", {})
+        agents = data["external_agents"]
         return cls(
             interests=data["interests"],
             skills=data["skills"],

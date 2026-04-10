@@ -1,7 +1,7 @@
 from __future__ import annotations
 from textual.app import ComposeResult
 from textual.screen import Screen
-from textual.widgets import Input, Label
+from textual.widgets import Input, Label, Select
 from textual.containers import Horizontal, Vertical
 from osmind.tui.widgets.diff_viewer import DiffViewer
 from osmind.tui.widgets.chat_panel import ChatPanel
@@ -15,8 +15,12 @@ class LearnScreen(Screen):
     def compose(self) -> ComposeResult:
         with Vertical():
             with Horizontal(id="pr-input-bar"):
-                yield Label("PR number: ")
-                yield Input(placeholder="e.g. 2341", id="pr-input")
+                yield Select(
+                    [(r["repo"], r["repo"]) for r in self.app.config.watching],
+                    id="repo-select",
+                    prompt="Select repo",
+                )
+                yield Input(placeholder="PR number, e.g. 2341", id="pr-input")
             with Horizontal(id="main-pane"):
                 yield DiffViewer("PR Diff", id="diff-viewer")
                 yield ChatPanel(id="chat-panel")
@@ -40,7 +44,11 @@ class LearnScreen(Screen):
             return
         number = int(match.group())
 
-        repo = self.app.config.watching[0]["repo"]
+        from textual.widgets import Select as TSelect
+        repo_select = self.query_one("#repo-select", TSelect)
+        if repo_select.value is TSelect.BLANK:
+            return
+        repo = str(repo_select.value)
         gh = GitHubClient(token=os.environ.get("GITHUB_TOKEN", ""))
         self._pr = gh.get_pr(repo, number)
         self.query_one(DiffViewer).load_pr(self._pr)
