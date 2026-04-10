@@ -1,0 +1,8 @@
+{
+  "number": 42,
+  "title": "Add Qwen3MoE support",
+  "body": "We need to add Qwen3MoE model support to the model adapter.",
+  "labels": [{"name": "good first issue"}, {"name": "feat"}],
+  "html_url": "https://github.com/sgl-project/sglang/issues/42",
+  "state": "open"
+}
