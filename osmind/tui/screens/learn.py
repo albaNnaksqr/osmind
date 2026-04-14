@@ -10,12 +10,15 @@ from osmind.tui.widgets.chat_panel import ChatPanel
 
 class LearnScreen(Vertical):
     DEFAULT_CSS = """
+    LearnScreen { height: 1fr; }
+    LearnScreen #main-area { height: 1fr; }
     LearnScreen #left-pane { width: 35; border-right: solid $panel; }
     LearnScreen #pr-table { height: 1fr; }
     LearnScreen #right-pane { width: 1fr; }
-    LearnScreen #main-area { height: 1fr; }
-    LearnScreen DiffViewer { width: 1fr; }
+    LearnScreen #diff-chat { height: 1fr; }
+    LearnScreen DiffViewer { width: 1fr; height: 1fr; }
     LearnScreen ChatPanel { width: 1fr; }
+    LearnScreen ChatPanel RichLog { height: 1fr; }
     LearnScreen #loader { display: none; height: 3; }
     LearnScreen #pr-hint { height: 1; padding: 0 1; color: $text-muted; }
     """
@@ -86,10 +89,9 @@ class LearnScreen(Vertical):
     async def _load_pr_object(self, pr_stub) -> None:
         """Load a PR stub (from merged list) — fetch full diff then start Socratic."""
         loader = self.query_one("#loader", LoadingIndicator)
+        chat = self.query_one(ChatPanel)
         loader.display = True
-        self.query_one(ChatPanel).add_message(
-            "assistant", f"Loading PR #{pr_stub.number}: {pr_stub.title}…"
-        )
+        chat.add_message("assistant", f"正在加载 PR #{pr_stub.number}: {pr_stub.title}…")
         try:
             token = os.environ.get("GITHUB_TOKEN", "")
             llm_cfg = self.app.config.llm
@@ -101,21 +103,44 @@ class LearnScreen(Vertical):
                 from osmind.engine.socratic import SocraticEngine
                 gh = GitHubClient(token=token)
                 pr = gh.get_pr(repo, pr_stub.number)
+                # Load diff first (fast), so user sees it immediately
+                return pr, llm_cfg
+
+            pr, llm_cfg = await asyncio.to_thread(_blocking)
+            self._pr = pr
+            self.query_one(DiffViewer).load_pr(pr)
+            chat.add_message("assistant",
+                f"Diff 已加载（{len(pr.files)} 个文件）。正在生成 Socratic 问题…"
+            )
+
+            # Now call LLM for first question
+            def _ask():
+                from osmind.engine.llm import LLMClient
+                from osmind.engine.socratic import SocraticEngine
                 llm = LLMClient(llm_cfg)
                 engine = SocraticEngine(llm)
-                first_q = engine.first_question(pr)
-                return pr, engine, first_q
+                return engine, engine.first_question(pr)
 
-            pr, engine, first_q = await asyncio.to_thread(_blocking)
-            self._pr = pr
-            self._socratic = engine
-            self._history: list[dict] = [{"role": "assistant", "content": first_q}]
-            self.query_one(DiffViewer).load_pr(pr)
-            self.query_one(ChatPanel).add_message("assistant", first_q)
+            try:
+                engine, first_q = await asyncio.to_thread(_ask)
+                self._socratic = engine
+                self._history: list[dict] = [{"role": "assistant", "content": first_q}]
+                chat.add_message("assistant", first_q)
+            except Exception as llm_err:
+                err_msg = str(llm_err)
+                base_url = llm_cfg.base_url
+                chat.add_message("assistant",
+                    f"⚠️  LLM 无法连接（{base_url}）\n\n"
+                    f"错误：{err_msg[:200]}\n\n"
+                    "你仍然可以查看左侧 diff。如需 Socratic 提问，请检查：\n"
+                    "  • profile.yaml 里的 llm.base_url 是否正确\n"
+                    "  • 本地模型是否已启动（如 SGLang）\n"
+                    "  • 或将 base_url 改为 https://api.openai.com/v1"
+                )
         except Exception as e:
             msg = str(e)
             self.notify(msg, severity="error")
-            self.query_one(ChatPanel).add_message("assistant", f"[错误] {msg}")
+            chat.add_message("assistant", f"[错误] {msg}")
         finally:
             loader.display = False
 
