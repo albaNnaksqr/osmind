@@ -31,10 +31,11 @@ class AgentLauncher:
             url=issue.url,
         )
 
-    def launch_claude(self, issue: GHIssue) -> subprocess.Popen:
+    def launch_claude(self, issue: GHIssue) -> None:
+        """Run Claude Code interactively with issue context as the initial prompt."""
         prompt = self._build_prompt(issue)
-        return subprocess.Popen([self._claude, "--print", prompt])
+        subprocess.run([self._claude, "-p", prompt])
 
-    def launch_codex(self, issue: GHIssue) -> subprocess.Popen:
+    def launch_codex(self, issue: GHIssue) -> None:
         prompt = self._build_prompt(issue)
-        return subprocess.Popen([self._codex, prompt])
+        subprocess.run([self._codex, prompt])

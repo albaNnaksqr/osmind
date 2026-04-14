@@ -131,7 +131,7 @@ class DiscoverScreen(Vertical):
             timeout=5,
         )
 
-    def action_launch_claude(self) -> None:
+    async def action_launch_claude(self) -> None:
         issue = self._get_selected_issue()
         if not issue:
             self.notify("先选中一个 issue", severity="warning")
@@ -141,10 +141,11 @@ class DiscoverScreen(Vertical):
             self.app.config.external_agents.claude_code,
             self.app.config.external_agents.codex,
         )
-        launcher.launch_claude(issue)
-        self.notify(f"Claude Code launched for #{issue.number}")
+        # Suspend TUI, hand terminal to Claude Code, resume when done
+        with self.app.suspend():
+            launcher.launch_claude(issue)
 
-    def action_launch_codex(self) -> None:
+    async def action_launch_codex(self) -> None:
         issue = self._get_selected_issue()
         if not issue:
             self.notify("先选中一个 issue", severity="warning")
@@ -154,5 +155,5 @@ class DiscoverScreen(Vertical):
             self.app.config.external_agents.claude_code,
             self.app.config.external_agents.codex,
         )
-        launcher.launch_codex(issue)
-        self.notify(f"Codex launched for #{issue.number}")
+        with self.app.suspend():
+            launcher.launch_codex(issue)
