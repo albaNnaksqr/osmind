@@ -61,6 +61,9 @@ class LearnScreen(Vertical):
 
         loader = self.query_one("#loader", LoadingIndicator)
         loader.display = True
+        self.query_one(ChatPanel).add_message(
+            "assistant", f"Loading PR #{number} from {repo}…"
+        )
         try:
             token = os.environ.get("GITHUB_TOKEN", "")
             llm_cfg = self.app.config.llm
@@ -81,7 +84,18 @@ class LearnScreen(Vertical):
             self.query_one(DiffViewer).load_pr(pr)
             self.query_one(ChatPanel).add_message("assistant", first_q)
         except Exception as e:
-            self.notify(str(e), severity="error")
+            msg = str(e)
+            if "404" in msg:
+                hint = (
+                    f"PR #{number} 在 {repo} 中不存在。\n"
+                    "注意：Discover 里显示的是 issue 编号，"
+                    "Learn 需要输入 PR 编号（merged PR 才有 diff）。"
+                )
+                self.notify(hint, severity="error", timeout=8)
+                self.query_one(ChatPanel).add_message("assistant", f"[错误] {hint}")
+            else:
+                self.notify(msg, severity="error")
+                self.query_one(ChatPanel).add_message("assistant", f"[错误] {msg}")
         finally:
             loader.display = False
 
