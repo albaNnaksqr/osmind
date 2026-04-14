@@ -24,9 +24,9 @@ def test_build_claude_prompt_for_issue(launcher):
 
 def test_launch_claude_calls_subprocess(launcher):
     issue = GHIssue(42, "Add Qwen3MoE", "Body", [], "u", "sgl-project/sglang", "open")
-    with patch("osmind.agents.launcher.subprocess.Popen") as mock_popen:
-        mock_popen.return_value = MagicMock()
+    with patch("osmind.agents.launcher.subprocess.run") as mock_run:
         launcher.launch_claude(issue)
-        mock_popen.assert_called_once()
-        args = mock_popen.call_args[0][0]
+        mock_run.assert_called_once()
+        args = mock_run.call_args[0][0]
         assert args[0] == "claude"
+        assert "-p" in args
