@@ -2,7 +2,7 @@ from __future__ import annotations
 import asyncio
 import os
 from textual.app import ComposeResult
-from textual.widgets import Input, LoadingIndicator, Select
+from textual.widgets import DataTable, Input, Label, LoadingIndicator, Select, Static
 from textual.containers import Horizontal, Vertical
 from osmind.tui.widgets.diff_viewer import DiffViewer
 from osmind.tui.widgets.chat_panel import ChatPanel
@@ -10,12 +10,17 @@ from osmind.tui.widgets.chat_panel import ChatPanel
 
 class LearnScreen(Vertical):
     DEFAULT_CSS = """
-    LearnScreen #loader { display: none; height: 3; }
-    LearnScreen #main-pane { height: 1fr; }
+    LearnScreen #left-pane { width: 35; border-right: solid $panel; }
+    LearnScreen #pr-table { height: 1fr; }
+    LearnScreen #right-pane { width: 1fr; }
+    LearnScreen #main-area { height: 1fr; }
     LearnScreen DiffViewer { width: 1fr; }
     LearnScreen ChatPanel { width: 1fr; }
+    LearnScreen #loader { display: none; height: 3; }
+    LearnScreen #pr-hint { height: 1; padding: 0 1; color: $text-muted; }
     """
     BINDINGS = [
+        ("f", "fetch_prs", "Fetch PRs"),
         ("ctrl+s", "save_note", "Save Note"),
     ]
 
@@ -23,54 +28,79 @@ class LearnScreen(Vertical):
         watching = self.app.config.watching
         options = [(r["repo"], r["repo"]) for r in watching]
         initial = watching[0]["repo"] if watching else Select.BLANK
-        with Horizontal(id="pr-input-bar"):
-            yield Select(options, id="repo-select", value=initial)
-            yield Input(placeholder="PR number, e.g. 2341", id="pr-input")
-        yield LoadingIndicator(id="loader")
-        with Horizontal(id="main-pane"):
-            yield DiffViewer("PR Diff", id="diff-viewer")
-            yield ChatPanel(id="chat-panel")
+        with Horizontal(id="main-area"):
+            with Vertical(id="left-pane"):
+                yield Select(options, id="repo-select", value=initial)
+                yield Label("Press f to load PRs", id="pr-hint")
+                yield DataTable(id="pr-table", cursor_type="row")
+            with Vertical(id="right-pane"):
+                yield LoadingIndicator(id="loader")
+                with Horizontal(id="diff-chat"):
+                    yield DiffViewer("PR Diff", id="diff-viewer")
+                    yield ChatPanel(id="chat-panel")
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input.id == "pr-input":
-            self.run_worker(self._load_pr(event.value.strip()), exclusive=True)
-        elif event.input.id == "chat-input":
-            text = event.value.strip()
-            event.input.value = ""
-            if text:
-                self.run_worker(self._handle_user_reply(text), exclusive=True)
+    def on_mount(self) -> None:
+        table = self.query_one("#pr-table", DataTable)
+        table.add_columns("  #", "Title")
 
-    async def _load_pr(self, value: str) -> None:
-        import re
-        from osmind.github.client import GitHubClient
-        from osmind.engine.llm import LLMClient
-        from osmind.engine.socratic import SocraticEngine
+    def action_fetch_prs(self) -> None:
+        self.run_worker(self._fetch_prs(), exclusive=True)
 
-        match = re.search(r"\d+", value)
-        if not match:
-            self.notify("请输入有效的 PR 编号", severity="warning")
-            return
-        number = int(match.group())
-
-        from textual.widgets import Select as TSelect
-        repo_select = self.query_one("#repo-select", TSelect)
-        if repo_select.value is TSelect.BLANK:
+    async def _fetch_prs(self) -> None:
+        repo_select = self.query_one("#repo-select", Select)
+        if repo_select.value is Select.BLANK:
             self.notify("请先选择 repo", severity="warning")
             return
         repo = str(repo_select.value)
 
+        hint = self.query_one("#pr-hint", Label)
+        hint.update(f"Loading PRs from {repo}…")
+        try:
+            token = os.environ.get("GITHUB_TOKEN", "")
+
+            prs = await asyncio.to_thread(
+                lambda: __import__("osmind.github.client", fromlist=["GitHubClient"])
+                .GitHubClient(token=token)
+                .get_merged_prs(repo, limit=30)
+            )
+            self._prs_by_row: dict[int, object] = {}
+            table = self.query_one("#pr-table", DataTable)
+            table.clear()
+            for idx, pr in enumerate(prs):
+                table.add_row(f"#{pr.number}", pr.title[:28], key=str(idx))
+                self._prs_by_row[idx] = pr
+            hint.update(f"{len(prs)} PRs — Enter to load")
+            table.focus()
+        except Exception as e:
+            hint.update("Error — press f to retry")
+            self.notify(str(e), severity="error")
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        if event.data_table.id != "pr-table":
+            return
+        row_idx = int(event.row_key.value)
+        pr = self._prs_by_row.get(row_idx)
+        if pr:
+            self.run_worker(self._load_pr_object(pr), exclusive=True)
+
+    async def _load_pr_object(self, pr_stub) -> None:
+        """Load a PR stub (from merged list) — fetch full diff then start Socratic."""
         loader = self.query_one("#loader", LoadingIndicator)
         loader.display = True
         self.query_one(ChatPanel).add_message(
-            "assistant", f"Loading PR #{number} from {repo}…"
+            "assistant", f"Loading PR #{pr_stub.number}: {pr_stub.title}…"
         )
         try:
             token = os.environ.get("GITHUB_TOKEN", "")
             llm_cfg = self.app.config.llm
+            repo = pr_stub.repo
 
             def _blocking():
+                from osmind.github.client import GitHubClient
+                from osmind.engine.llm import LLMClient
+                from osmind.engine.socratic import SocraticEngine
                 gh = GitHubClient(token=token)
-                pr = gh.get_pr(repo, number)
+                pr = gh.get_pr(repo, pr_stub.number)
                 llm = LLMClient(llm_cfg)
                 engine = SocraticEngine(llm)
                 first_q = engine.first_question(pr)
@@ -80,24 +110,21 @@ class LearnScreen(Vertical):
             self._pr = pr
             self._socratic = engine
             self._history: list[dict] = [{"role": "assistant", "content": first_q}]
-
             self.query_one(DiffViewer).load_pr(pr)
             self.query_one(ChatPanel).add_message("assistant", first_q)
         except Exception as e:
             msg = str(e)
-            if "404" in msg:
-                hint = (
-                    f"PR #{number} 在 {repo} 中不存在。\n"
-                    "注意：Discover 里显示的是 issue 编号，"
-                    "Learn 需要输入 PR 编号（merged PR 才有 diff）。"
-                )
-                self.notify(hint, severity="error", timeout=8)
-                self.query_one(ChatPanel).add_message("assistant", f"[错误] {hint}")
-            else:
-                self.notify(msg, severity="error")
-                self.query_one(ChatPanel).add_message("assistant", f"[错误] {msg}")
+            self.notify(msg, severity="error")
+            self.query_one(ChatPanel).add_message("assistant", f"[错误] {msg}")
         finally:
             loader.display = False
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "chat-input":
+            text = event.value.strip()
+            event.input.value = ""
+            if text:
+                self.run_worker(self._handle_user_reply(text), exclusive=True)
 
     async def _handle_user_reply(self, text: str) -> None:
         if not hasattr(self, "_socratic"):
@@ -110,7 +137,6 @@ class LearnScreen(Vertical):
         try:
             history = list(self._history)
             socratic = self._socratic
-
             followup = await asyncio.to_thread(socratic.followup, history)
             self._history.append({"role": "assistant", "content": followup})
             self.query_one(ChatPanel).add_message("assistant", followup)
@@ -121,7 +147,7 @@ class LearnScreen(Vertical):
 
     def action_save_note(self) -> None:
         if not hasattr(self, "_pr"):
-            self.notify("先加载一个 PR", severity="warning")
+            self.notify("先选一个 PR", severity="warning")
             return
         from osmind.notes.vault import NotesVault, Note
         vault = NotesVault(self.app.config.notes_vault)

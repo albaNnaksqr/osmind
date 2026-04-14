@@ -26,3 +26,10 @@ class IssueTable(DataTable):
                 labels,
                 key=str(issue.number),
             )
+
+    def update_score(self, issue_number: str, score: float) -> None:
+        """Update the score cell for a given issue number (called during background scoring)."""
+        try:
+            self.update_cell(issue_number, "Score", _star(score))
+        except Exception:
+            pass

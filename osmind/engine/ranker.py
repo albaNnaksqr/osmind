@@ -30,9 +30,14 @@ class Ranker:
         except (json.JSONDecodeError, KeyError, ValueError):
             return 0.0, ""
 
+    def score_one(self, issue: GHIssue) -> GHIssue:
+        """Score a single issue in-place and return it."""
+        score, reason = self._score_issue(issue)
+        issue.score = score
+        issue.reason = reason
+        return issue
+
     def rank(self, issues: list[GHIssue]) -> list[GHIssue]:
         for issue in issues:
-            score, reason = self._score_issue(issue)
-            issue.score = score
-            issue.reason = reason
+            self.score_one(issue)
         return sorted(issues, key=lambda i: i.score, reverse=True)

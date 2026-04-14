@@ -14,6 +14,7 @@ class DiscoverScreen(Vertical):
     """
     BINDINGS = [
         ("f", "fetch", "Fetch Issues"),
+        ("p", "open_in_learn", "Open in Learn"),
         ("c", "launch_claude", "Claude Code"),
         ("x", "launch_codex", "Codex"),
     ]
@@ -42,12 +43,12 @@ class DiscoverScreen(Vertical):
             self.query_one("#reason-panel", Static).update(
                 f"[bold]推荐理由:[/bold] {issue.reason}"
             )
+        elif issue:
+            self.query_one("#reason-panel", Static).update(
+                "[dim]评分中…[/dim]"
+            )
 
     async def action_fetch(self) -> None:
-        from osmind.github.client import GitHubClient
-        from osmind.engine.llm import LLMClient
-        from osmind.engine.ranker import Ranker
-
         repo_select = self.query_one("#repo-select", Select)
         if repo_select.value is Select.BLANK:
             self.notify("请先选择 repo", severity="warning")
@@ -61,28 +62,51 @@ class DiscoverScreen(Vertical):
 
         try:
             token = os.environ.get("GITHUB_TOKEN", "")
-            interests = self.app.config.interests
-            skills = self.app.config.skills
-            llm_cfg = self.app.config.llm
 
-            def _blocking() -> list:
-                gh = GitHubClient(token=token)
-                llm = LLMClient(llm_cfg)
-                ranker = Ranker(llm, interests, skills)
-                issues = gh.get_issues(repo, limit=30)
-                return ranker.rank(issues)
-
-            ranked = await asyncio.to_thread(_blocking)
-            self._issues_by_number = {str(i.number): i for i in ranked}
-            self.query_one(IssueTable).populate(ranked)
-            self.query_one(IssueTable).focus()
-            self.notify(f"{len(ranked)} issues loaded", severity="information")
-            hint.update("  ↑↓ navigate  c: Claude  x: Codex")
-        except Exception as e:
-            self.notify(str(e), severity="error")
-            hint.update("  Error — press f to retry")
-        finally:
+            # Phase 1: fetch issues immediately, show without scores
+            issues = await asyncio.to_thread(
+                lambda: __import__("osmind.github.client", fromlist=["GitHubClient"])
+                .GitHubClient(token=token)
+                .get_issues(repo, limit=30)
+            )
+            self._issues_by_number = {str(i.number): i for i in issues}
+            table = self.query_one(IssueTable)
+            table.populate(issues)
+            table.focus()
+            hint.update(f"  {len(issues)} issues • 评分中…  ↑↓ navigate  p: Open in Learn")
             loader.display = False
+
+            # Phase 2: score each issue in background, update table as we go
+            self.run_worker(
+                self._score_progressively(issues, repo, token),
+                exclusive=False,
+            )
+        except Exception as e:
+            hint.update("  Error — press f to retry")
+            self.notify(str(e), severity="error")
+            loader.display = False
+
+    async def _score_progressively(self, issues, repo: str, token: str) -> None:
+        from osmind.engine.llm import LLMClient
+        from osmind.engine.ranker import Ranker
+
+        llm_cfg = self.app.config.llm
+        interests = self.app.config.interests
+        skills = self.app.config.skills
+
+        try:
+            llm = LLMClient(llm_cfg)
+            ranker = Ranker(llm, interests, skills)
+
+            for issue in issues:
+                scored = await asyncio.to_thread(ranker.score_one, issue)
+                self._issues_by_number[str(scored.number)] = scored
+                self.query_one(IssueTable).update_score(str(scored.number), scored.score)
+
+            hint = self.query_one("#hint", Label)
+            hint.update("  ↑↓ navigate  p: Open in Learn  c: Claude  x: Codex")
+        except Exception as e:
+            self.notify(f"评分出错: {e}", severity="warning")
 
     def _get_selected_issue(self):
         table = self.query_one(IssueTable)
@@ -94,6 +118,18 @@ class DiscoverScreen(Vertical):
             return self._issues_by_number.get(issue_number)
         except Exception:
             return None
+
+    def action_open_in_learn(self) -> None:
+        issue = self._get_selected_issue()
+        if not issue:
+            self.notify("先选中一个 issue", severity="warning")
+            return
+        # Switch to Learn tab — user can find related PRs there
+        self.app.action_switch_tab("learn")
+        self.notify(
+            f"已切换到 Learn。在左侧 PR 列表里按 f 加载 {issue.repo} 的近期 PR。",
+            timeout=5,
+        )
 
     def action_launch_claude(self) -> None:
         issue = self._get_selected_issue()
