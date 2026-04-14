@@ -20,12 +20,11 @@ class LearnScreen(Vertical):
     ]
 
     def compose(self) -> ComposeResult:
+        watching = self.app.config.watching
+        options = [(r["repo"], r["repo"]) for r in watching]
+        initial = watching[0]["repo"] if watching else Select.BLANK
         with Horizontal(id="pr-input-bar"):
-            yield Select(
-                [(r["repo"], r["repo"]) for r in self.app.config.watching],
-                id="repo-select",
-                prompt="Select repo",
-            )
+            yield Select(options, id="repo-select", value=initial)
             yield Input(placeholder="PR number, e.g. 2341", id="pr-input")
         yield LoadingIndicator(id="loader")
         with Horizontal(id="main-pane"):

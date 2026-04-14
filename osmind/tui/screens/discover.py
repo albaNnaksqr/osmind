@@ -23,12 +23,11 @@ class DiscoverScreen(Vertical):
         self._issues_by_number: dict[str, object] = {}
 
     def compose(self) -> ComposeResult:
+        watching = self.app.config.watching
+        options = [(r["repo"], r["repo"]) for r in watching]
+        initial = watching[0]["repo"] if watching else Select.BLANK
         with Horizontal(id="toolbar"):
-            yield Select(
-                [(r["repo"], r["repo"]) for r in self.app.config.watching],
-                id="repo-select",
-                prompt="Select repo",
-            )
+            yield Select(options, id="repo-select", value=initial)
             yield Label("  Press f to fetch issues", id="hint")
         yield LoadingIndicator(id="loader")
         yield IssueTable(id="issue-table")
