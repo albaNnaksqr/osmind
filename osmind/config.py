@@ -13,6 +13,7 @@ class LLMConfig:
     base_url: str
     model: str
     api_key: str
+    enable_thinking: bool = False  # set True for reasoning models that need CoT
 
 
 @dataclass
@@ -49,6 +50,7 @@ class Config:
                 base_url=llm["base_url"],
                 model=llm["model"],
                 api_key=llm.get("api_key", ""),
+                enable_thinking=llm.get("enable_thinking", False),
             ),
             external_agents=AgentConfig(
                 claude_code=agents.get("claude_code", "claude"),
