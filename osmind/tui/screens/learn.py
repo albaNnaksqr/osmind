@@ -1,13 +1,12 @@
 from __future__ import annotations
 from textual.app import ComposeResult
-from textual.screen import Screen
 from textual.widgets import Input, Label, Select
 from textual.containers import Horizontal, Vertical
 from osmind.tui.widgets.diff_viewer import DiffViewer
 from osmind.tui.widgets.chat_panel import ChatPanel
 
 
-class LearnScreen(Screen):
+class LearnScreen(Vertical):
     BINDINGS = [
         ("ctrl+s", "save_note", "Save Note"),
     ]

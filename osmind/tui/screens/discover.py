@@ -1,12 +1,11 @@
 from __future__ import annotations
 from textual.app import ComposeResult
-from textual.screen import Screen
 from textual.widgets import Label, Select, Static
 from textual.containers import Vertical, Horizontal
 from osmind.tui.widgets.issue_list import IssueTable
 
 
-class DiscoverScreen(Screen):
+class DiscoverScreen(Vertical):
     BINDINGS = [
         ("f", "fetch", "Fetch Issues"),
         ("c", "launch_claude", "Claude Code"),
@@ -34,9 +33,9 @@ class DiscoverScreen(Screen):
         if row_key is None:
             return
         issue = self._issues_by_number.get(str(row_key))
-        if issue and hasattr(issue, "_reason"):
+        if issue and issue.reason:
             self.query_one("#reason-panel", Static).update(
-                f"[bold]推荐理由:[/bold] {issue._reason}"
+                f"[bold]推荐理由:[/bold] {issue.reason}"
             )
 
     async def action_fetch(self) -> None:
@@ -62,6 +61,7 @@ class DiscoverScreen(Screen):
         table = self.query_one(IssueTable)
         table.populate(ranked)
         self.query_one("#hint", Label).update(f"{len(ranked)} issues loaded")
+        table.focus()
 
     def _get_selected_issue(self):
         table = self.query_one(IssueTable)

@@ -1,11 +1,10 @@
 from __future__ import annotations
 from textual.app import ComposeResult
-from textual.screen import Screen
 from textual.widgets import Label, Input, RichLog
 from textual.containers import Vertical
 
 
-class ReviewScreen(Screen):
+class ReviewScreen(Vertical):
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Label("[bold]Review[/bold] — osmind will ask about your notes", markup=True)
