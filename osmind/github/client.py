@@ -5,7 +5,10 @@ from osmind.github.models import GHIssue, GHPR, PRFile
 
 class GitHubClient:
     def __init__(self, token: str):
-        self._gh = Github(token)
+        if token:
+            self._gh = Github(token)
+        else:
+            self._gh = Github()  # unauthenticated: public repos, 60 req/hr
 
     def get_issues(self, repo: str, state: str = "open", limit: int = 30) -> list[GHIssue]:
         r = self._gh.get_repo(repo)

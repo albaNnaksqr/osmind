@@ -49,19 +49,23 @@ class DiscoverScreen(Vertical):
             return
         repo = str(repo_select.value)
 
-        self.query_one("#hint", Label).update("Fetching...")
-        gh = GitHubClient(token=os.environ.get("GITHUB_TOKEN", ""))
-        llm = LLMClient(self.app.config.llm)
-        ranker = Ranker(llm, self.app.config.interests, self.app.config.skills)
+        hint = self.query_one("#hint", Label)
+        hint.update("Fetching...")
+        try:
+            gh = GitHubClient(token=os.environ.get("GITHUB_TOKEN", ""))
+            llm = LLMClient(self.app.config.llm)
+            ranker = Ranker(llm, self.app.config.interests, self.app.config.skills)
 
-        issues = gh.get_issues(repo, limit=30)
-        ranked = ranker.rank(issues)
-        self._issues_by_number = {str(i.number): i for i in ranked}
+            issues = gh.get_issues(repo, limit=30)
+            ranked = ranker.rank(issues)
+            self._issues_by_number = {str(i.number): i for i in ranked}
 
-        table = self.query_one(IssueTable)
-        table.populate(ranked)
-        self.query_one("#hint", Label).update(f"{len(ranked)} issues loaded")
-        table.focus()
+            table = self.query_one(IssueTable)
+            table.populate(ranked)
+            hint.update(f"{len(ranked)} issues loaded")
+            table.focus()
+        except Exception as e:
+            hint.update(f"[red]Error: {e}[/red]")
 
     def _get_selected_issue(self):
         table = self.query_one(IssueTable)
