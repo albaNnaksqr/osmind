@@ -4,6 +4,8 @@ from osmind.github.models import GHIssue, GHPR, PRFile
 from osmind.packs.models import LearningPack, PackSection, SourceRef
 
 
+DIFF_SNIPPET_MAX_CHARS = 4000
+
 REQUIRED_PR_SECTIONS = [
     "Why This Is Worth Reading",
     "What Changed",
@@ -114,8 +116,28 @@ def _diff_map(files: list[PRFile]) -> str:
             blocks.append(f"### `{file.filename}`\n\n{patch}")
             continue
 
-        blocks.append(f"### `{file.filename}`\n\n```diff\n{patch}\n```")
+        snippet = _truncate_diff(patch)
+        fence = _markdown_fence(snippet)
+        blocks.append(f"### `{file.filename}`\n\n{fence}diff\n{snippet}\n{fence}")
     return "\n\n".join(blocks)
+
+
+def _truncate_diff(patch: str) -> str:
+    if len(patch) <= DIFF_SNIPPET_MAX_CHARS:
+        return patch
+    return f"{patch[:DIFF_SNIPPET_MAX_CHARS].rstrip()}\n... [diff truncated]"
+
+
+def _markdown_fence(text: str) -> str:
+    longest_run = 0
+    current_run = 0
+    for char in text:
+        if char == "`":
+            current_run += 1
+            longest_run = max(longest_run, current_run)
+        else:
+            current_run = 0
+    return "`" * max(3, longest_run + 1)
 
 
 def _reading_path(files: list[PRFile]) -> str:

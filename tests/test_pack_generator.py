@@ -101,6 +101,44 @@ def test_from_pr_diff_map_includes_up_to_first_eight_file_snippets_and_missing_p
     assert "No patch text available." in diff_map
 
 
+def test_from_pr_diff_map_truncates_long_patch_snippets():
+    long_patch = "\n".join(f"+line {index}" for index in range(600))
+    pr = GHPR(
+        number=9,
+        title="Long patch",
+        body="",
+        url="https://github.com/o/r/pull/9",
+        repo="o/r",
+        files=[PRFile(filename="pkg/large.py", patch=long_patch)],
+    )
+
+    pack = PackGenerator().from_pr(pr)
+    diff_map = {section.title: section.body for section in pack.sections}["Diff Map"]
+
+    assert "... [diff truncated]" in diff_map
+    assert "+line 0" in diff_map
+    assert "+line 599" not in diff_map
+
+
+def test_from_pr_diff_map_uses_safe_fence_for_patch_containing_backticks():
+    patch = "@@ -1 +1 @@\n+before\n+```\n+inside\n+```"
+    pr = GHPR(
+        number=10,
+        title="Fence patch",
+        body="",
+        url="https://github.com/o/r/pull/10",
+        repo="o/r",
+        files=[PRFile(filename="pkg/fence.md", patch=patch)],
+    )
+
+    pack = PackGenerator().from_pr(pr)
+    diff_map = {section.title: section.body for section in pack.sections}["Diff Map"]
+
+    assert "````diff\n" in diff_map
+    assert "\n````" in diff_map
+    assert "+```" in diff_map
+
+
 def test_from_pr_agent_prompt_mentions_pr_number_repo_and_title():
     pack = PackGenerator().from_pr(_sample_pr())
     prompt = {section.title: section.body for section in pack.sections}[
