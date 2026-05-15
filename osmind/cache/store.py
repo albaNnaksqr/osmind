@@ -55,6 +55,7 @@ class CacheStore:
                 source_updated_at TEXT NOT NULL,
                 generated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 stale INTEGER NOT NULL DEFAULT 0,
+                version INTEGER NOT NULL,
                 UNIQUE (repo, source_type, number)
             );
             """
@@ -127,29 +128,35 @@ class CacheStore:
         confidence: str,
         source_updated_at: str,
     ) -> None:
+        next_version = self._next_pack_version()
         self._conn.execute(
             """
             INSERT INTO packs
-                (repo, source_type, number, path, status, confidence, source_updated_at, stale)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+                (repo, source_type, number, path, status, confidence, source_updated_at, stale, version)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
             ON CONFLICT(repo, source_type, number) DO UPDATE SET
                 path = excluded.path,
                 status = excluded.status,
                 confidence = excluded.confidence,
                 source_updated_at = excluded.source_updated_at,
                 generated_at = CURRENT_TIMESTAMP,
-                stale = 0
+                stale = 0,
+                version = excluded.version
             """,
-            (repo, source_type, number, str(path), status, confidence, source_updated_at),
+            (repo, source_type, number, str(path), status, confidence, source_updated_at, next_version),
         )
         self._conn.commit()
+
+    def _next_pack_version(self) -> int:
+        row = self._conn.execute("SELECT COALESCE(MAX(version), 0) + 1 AS next_version FROM packs").fetchone()
+        return int(row["next_version"])
 
     def list_packs(self) -> list[dict[str, Any]]:
         rows = self._conn.execute(
             """
             SELECT repo, source_type, number, path, status, confidence, source_updated_at, generated_at, stale
             FROM packs
-            ORDER BY generated_at DESC, id DESC
+            ORDER BY version DESC
             """
         ).fetchall()
         return [dict(row) for row in rows]
