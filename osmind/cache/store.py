@@ -257,3 +257,14 @@ class CacheStore:
             """
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def get_pack(self, repo: str, source_type: str, number: int) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            """
+            SELECT repo, source_type, number, path, status, confidence, source_updated_at, generated_at, stale
+            FROM packs
+            WHERE repo = ? AND source_type = ? AND number = ?
+            """,
+            (repo, source_type, number),
+        ).fetchone()
+        return dict(row) if row is not None else None

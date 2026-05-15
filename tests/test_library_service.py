@@ -110,6 +110,59 @@ Keep everything after notes too.
     assert "## Notes\n\nKeep this manual note.\n\n## Follow-up\n\nKeep everything after notes too." in markdown
 
 
+def test_write_pr_pack_uses_cached_path_when_pr_title_changes(tmp_path):
+    notes_vault = tmp_path / "notes"
+    cache_path = tmp_path / "cache" / "osmind.db"
+    library = PackLibrary(notes_vault, cache_path)
+    original_path = library.write_pr_pack(_pr(title="Original Title"))
+    original_path.write_text(
+        """---
+type: osmind-learning-pack
+source_type: pr
+repo: openai/osmind
+number: 42
+title: Original Title
+url: https://github.com/openai/osmind/pull/42
+status: reviewed
+confidence: high
+generated_at: '2026-05-15'
+source_updated_at: '2026-05-15T01:02:03+00:00'
+modules:
+- osmind
+tags:
+- osmind
+---
+
+# PR #42: Original Title
+
+## Why This Is Worth Reading
+
+Old generated content.
+
+## Notes
+
+Retitle should not move this note.
+""",
+        encoding="utf-8",
+    )
+
+    returned_path = library.write_pr_pack(_pr(title="Retitled Pack", updated_at="2026-05-16T01:02:03+00:00"))
+
+    assert returned_path == original_path
+    assert not (notes_vault / "osmind" / "openai_osmind" / "pr-42-retitled-pack.md").exists()
+    markdown = original_path.read_text(encoding="utf-8")
+    assert "# PR #42: Retitled Pack" in markdown
+    assert "title: Retitled Pack" in markdown
+    assert "status: reviewed" in markdown
+    assert "confidence: high" in markdown
+    assert "Old generated content." not in markdown
+    assert "## Notes\n\nRetitle should not move this note." in markdown
+    packs = library.list_packs()
+    assert packs[0]["path"] == str(original_path)
+    assert packs[0]["status"] == "reviewed"
+    assert packs[0]["confidence"] == "high"
+
+
 def test_write_pr_pack_replace_failure_preserves_existing_file_and_cache(tmp_path, monkeypatch):
     notes_vault = tmp_path / "notes"
     cache_path = tmp_path / "cache" / "osmind.db"

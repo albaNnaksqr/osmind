@@ -25,7 +25,7 @@ class PackLibrary:
 
     def write_pr_pack(self, pr: GHPR) -> Path:
         pack = self.generator.from_pr(pr)
-        path = self._pr_pack_path(pr)
+        path = self._existing_pr_pack_path(pr) or self._pr_pack_path(pr)
         if path.exists():
             existing_markdown = path.read_text(encoding="utf-8")
             _preserve_status_and_confidence(pack, existing_markdown)
@@ -52,6 +52,14 @@ class PackLibrary:
         repo_dir = pr.repo.replace("/", "_")
         filename = f"pr-{pr.number}-{_slug(pr.title)}.md"
         return self.notes_vault / "osmind" / repo_dir / filename
+
+    def _existing_pr_pack_path(self, pr: GHPR) -> Path | None:
+        cached_pack = self.cache.get_pack(pr.repo, "pr", pr.number)
+        if cached_pack is None:
+            return None
+
+        cached_path = Path(cached_pack["path"])
+        return cached_path if cached_path.exists() else None
 
 
 def _slug(value: str) -> str:
