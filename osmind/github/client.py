@@ -14,22 +14,29 @@ class GitHubClient:
         else:
             self._gh = Github()  # unauthenticated: public repos, 60 req/hr
 
-    def get_issues(self, repo: str, state: str = "open", limit: int = 30) -> list[GHIssue]:
+    def get_issues(
+        self,
+        repo: str,
+        state: str = "open",
+        limit: int = 30,
+        include_comments: bool = False,
+    ) -> list[GHIssue]:
         r = self._gh.get_repo(repo)
         issues = []
         for i in r.get_issues(state=state):
             if len(issues) >= limit:
                 break
             comments = []
-            for c in i.get_comments():
-                if len(comments) >= 5:
-                    break
-                comments.append(GHComment(
-                    author=c.user.login if c.user else "",
-                    body=c.body or "",
-                    url=c.html_url,
-                    created_at=_iso(c.created_at),
-                ))
+            if include_comments:
+                for c in i.get_comments():
+                    if len(comments) >= 5:
+                        break
+                    comments.append(GHComment(
+                        author=c.user.login if c.user else "",
+                        body=c.body or "",
+                        url=c.html_url,
+                        created_at=_iso(c.created_at),
+                    ))
             issues.append(GHIssue(
                 number=i.number,
                 title=i.title,

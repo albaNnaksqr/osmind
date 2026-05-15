@@ -48,7 +48,7 @@ def test_get_issues_returns_list(client):
     assert issues[0].repo == "sgl-project/sglang"
 
 
-def test_get_issues_includes_updated_at_and_up_to_five_comments(client):
+def test_get_issues_default_includes_updated_at_without_fetching_comments(client):
     mock_issue = _make_mock_issue()
     mock_issue.get_comments.return_value = [_make_mock_comment() for _ in range(6)]
 
@@ -59,11 +59,32 @@ def test_get_issues_includes_updated_at_and_up_to_five_comments(client):
     issues = client.get_issues("sgl-project/sglang", state="open", limit=10)
 
     assert issues[0].updated_at == "2026-05-15T01:02:03+00:00"
+    assert issues[0].comments == []
+    mock_issue.get_comments.assert_not_called()
+
+
+def test_get_issues_include_comments_fetches_up_to_five_comments(client):
+    mock_issue = _make_mock_issue()
+    mock_issue.get_comments.return_value = [_make_mock_comment() for _ in range(6)]
+
+    mock_repo = MagicMock()
+    mock_repo.get_issues.return_value = [mock_issue]
+    client._gh.get_repo.return_value = mock_repo
+
+    issues = client.get_issues(
+        "sgl-project/sglang",
+        state="open",
+        limit=10,
+        include_comments=True,
+    )
+
+    assert issues[0].updated_at == "2026-05-15T01:02:03+00:00"
     assert len(issues[0].comments) == 5
     assert issues[0].comments[0].author == "reviewer"
     assert issues[0].comments[0].body == "This issue is still active."
     assert issues[0].comments[0].url.endswith("#issuecomment-1")
     assert issues[0].comments[0].created_at == "2026-05-15T02:03:04+00:00"
+    mock_issue.get_comments.assert_called_once_with()
 
 
 def test_get_pr_with_files(client):
