@@ -130,6 +130,68 @@ def test_cache_migrates_old_pack_schema_without_id_or_version(tmp_path: Path):
     assert packs[1]["status"] == "read"
 
 
+def test_cache_recovers_stranded_pack_rows_from_interrupted_migration(tmp_path: Path):
+    db_path = tmp_path / "osmind.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE packs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            repo TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            number INTEGER NOT NULL,
+            path TEXT NOT NULL,
+            status TEXT NOT NULL,
+            confidence TEXT NOT NULL,
+            source_updated_at TEXT NOT NULL,
+            generated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            stale INTEGER NOT NULL DEFAULT 0,
+            version INTEGER NOT NULL DEFAULT 0,
+            UNIQUE (repo, source_type, number)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE packs_old (
+            repo TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            number INTEGER NOT NULL,
+            path TEXT NOT NULL,
+            status TEXT NOT NULL,
+            confidence TEXT NOT NULL,
+            source_updated_at TEXT NOT NULL,
+            generated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            stale INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (repo, source_type, number)
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO packs_old
+            (repo, source_type, number, path, status, confidence, source_updated_at, generated_at, stale)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("o/r", "issue", 1, str(tmp_path / "old.md"), "read", "high", "u1", "2026-05-15 01:02:03", 0),
+    )
+    conn.commit()
+    conn.close()
+
+    store = CacheStore(db_path)
+
+    table_names = {
+        row["name"]
+        for row in store._conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+    }
+    packs = store.list_packs()
+
+    assert "packs_old" not in table_names
+    assert len(packs) == 1
+    assert packs[0]["number"] == 1
+    assert packs[0]["path"] == str(tmp_path / "old.md")
+
+
 def test_cache_orders_pack_writes_across_connections(tmp_path: Path):
     db_path = tmp_path / "osmind.db"
     first_store = CacheStore(db_path)

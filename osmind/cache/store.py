@@ -14,40 +14,49 @@ class CacheStore:
         self._init_schema()
 
     def _init_schema(self) -> None:
-        self._conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS github_items (
-                repo TEXT NOT NULL,
-                source_type TEXT NOT NULL,
-                number INTEGER NOT NULL,
-                title TEXT NOT NULL,
-                body_hash TEXT NOT NULL,
-                content_hash TEXT NOT NULL,
-                state TEXT NOT NULL,
-                url TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                fetched_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (repo, source_type, number)
-            );
-
-            CREATE TABLE IF NOT EXISTS analysis (
-                repo TEXT NOT NULL,
-                source_type TEXT NOT NULL,
-                number INTEGER NOT NULL,
-                model TEXT NOT NULL,
-                prompt_version TEXT NOT NULL,
-                input_hash TEXT NOT NULL,
-                scores_json TEXT NOT NULL,
-                reason TEXT NOT NULL,
-                generated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                error TEXT NOT NULL DEFAULT '',
-                PRIMARY KEY (repo, source_type, number, model, prompt_version, input_hash)
-            );
-            """
-        )
-        self._create_packs_table()
-        self._migrate_packs_schema()
-        self._conn.commit()
+        try:
+            self._conn.execute("BEGIN IMMEDIATE")
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS github_items (
+                    repo TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    number INTEGER NOT NULL,
+                    title TEXT NOT NULL,
+                    body_hash TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    fetched_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (repo, source_type, number)
+                )
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS analysis (
+                    repo TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    number INTEGER NOT NULL,
+                    model TEXT NOT NULL,
+                    prompt_version TEXT NOT NULL,
+                    input_hash TEXT NOT NULL,
+                    scores_json TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    generated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    error TEXT NOT NULL DEFAULT '',
+                    PRIMARY KEY (repo, source_type, number, model, prompt_version, input_hash)
+                )
+                """
+            )
+            self._create_packs_table()
+            self._migrate_packs_schema()
+            self._recover_interrupted_pack_migration()
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
 
     def _create_packs_table(self) -> None:
         self._conn.execute(
@@ -83,7 +92,33 @@ class CacheStore:
         ).fetchall()
         self._conn.execute("ALTER TABLE packs RENAME TO packs_old")
         self._create_packs_table()
-        for version, row in enumerate(legacy_rows, start=1):
+        self._copy_pack_rows(legacy_rows, start_version=1)
+        self._conn.execute("DROP TABLE packs_old")
+
+    def _recover_interrupted_pack_migration(self) -> None:
+        if not self._table_exists("packs_old"):
+            return
+
+        current_version = self._conn.execute("SELECT COALESCE(MAX(version), 0) AS current_version FROM packs").fetchone()
+        legacy_rows = self._conn.execute(
+            """
+            SELECT repo, source_type, number, path, status, confidence, source_updated_at, generated_at, stale
+            FROM packs_old
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM packs
+                WHERE packs.repo = packs_old.repo
+                    AND packs.source_type = packs_old.source_type
+                    AND packs.number = packs_old.number
+            )
+            ORDER BY generated_at ASC, rowid ASC
+            """
+        ).fetchall()
+        self._copy_pack_rows(legacy_rows, start_version=int(current_version["current_version"]) + 1)
+        self._conn.execute("DROP TABLE packs_old")
+
+    def _copy_pack_rows(self, rows: list[sqlite3.Row], start_version: int) -> None:
+        for offset, row in enumerate(rows):
             self._conn.execute(
                 """
                 INSERT INTO packs
@@ -100,14 +135,20 @@ class CacheStore:
                     row["source_updated_at"],
                     row["generated_at"],
                     row["stale"],
-                    version,
+                    start_version + offset,
                 ),
             )
-        self._conn.execute("DROP TABLE packs_old")
 
     def _pack_columns(self, table_name: str) -> set[str]:
         rows = self._conn.execute(f"PRAGMA table_info({table_name})").fetchall()
         return {row["name"] for row in rows}
+
+    def _table_exists(self, table_name: str) -> bool:
+        row = self._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table_name,),
+        ).fetchone()
+        return row is not None
 
     def upsert_item(
         self,
