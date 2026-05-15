@@ -162,23 +162,27 @@ class CacheStore:
         url: str,
         updated_at: str,
     ) -> None:
-        self._conn.execute(
-            """
-            INSERT INTO github_items
-                (repo, source_type, number, title, body_hash, content_hash, state, url, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(repo, source_type, number) DO UPDATE SET
-                title = excluded.title,
-                body_hash = excluded.body_hash,
-                content_hash = excluded.content_hash,
-                state = excluded.state,
-                url = excluded.url,
-                updated_at = excluded.updated_at,
-                fetched_at = CURRENT_TIMESTAMP
-            """,
-            (repo, source_type, number, title, body_hash, content_hash, state, url, updated_at),
-        )
-        self._conn.commit()
+        try:
+            self._conn.execute(
+                """
+                INSERT INTO github_items
+                    (repo, source_type, number, title, body_hash, content_hash, state, url, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(repo, source_type, number) DO UPDATE SET
+                    title = excluded.title,
+                    body_hash = excluded.body_hash,
+                    content_hash = excluded.content_hash,
+                    state = excluded.state,
+                    url = excluded.url,
+                    updated_at = excluded.updated_at,
+                    fetched_at = CURRENT_TIMESTAMP
+                """,
+                (repo, source_type, number, title, body_hash, content_hash, state, url, updated_at),
+            )
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
 
     def is_item_stale(
         self,

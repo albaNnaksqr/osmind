@@ -1,6 +1,8 @@
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from osmind.cache.store import CacheStore
 
 
@@ -36,6 +38,19 @@ def test_cache_marks_changed_hash_stale(tmp_path: Path):
     store.upsert_item("o/r", "issue", 42, "Title", "body1", "comments1", "open", "url", "u1")
 
     assert store.is_item_stale("o/r", "issue", 42, "body2", "comments1", "u1") is True
+
+
+def test_cache_rolls_back_failed_item_write_before_pack_write(tmp_path: Path):
+    store = CacheStore(tmp_path / "osmind.db")
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store.upsert_item("o/r", "issue", 42, None, "body1", "comments1", "open", "url", "u1")  # type: ignore[arg-type]
+
+    store.upsert_pack("o/r", "issue", 42, tmp_path / "pack.md", "unread", "unknown", "u1")
+
+    packs = store.list_packs()
+    assert len(packs) == 1
+    assert packs[0]["number"] == 42
 
 
 def test_cache_records_pack_metadata(tmp_path: Path):
