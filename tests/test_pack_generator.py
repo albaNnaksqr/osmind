@@ -1,4 +1,6 @@
-from osmind.github.models import GHPR, PRFile
+import pytest
+
+from osmind.github.models import GHIssue, GHPR, PRFile
 from osmind.packs.generator import PackGenerator
 
 
@@ -108,3 +110,18 @@ def test_from_pr_agent_prompt_mentions_pr_number_repo_and_title():
     assert "PR #7" in prompt
     assert "o/r" in prompt
     assert "Refactor runner" in prompt
+
+
+def test_from_issue_placeholder_raises_not_implemented_error():
+    issue = GHIssue(
+        number=42,
+        title="Tokenizer leak",
+        body="Long sequences leak memory.",
+        labels=[],
+        url="https://github.com/o/r/issues/42",
+        repo="o/r",
+        state="open",
+    )
+
+    with pytest.raises(NotImplementedError):
+        PackGenerator().from_issue(issue)
