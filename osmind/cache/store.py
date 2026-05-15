@@ -43,7 +43,15 @@ class CacheStore:
                 error TEXT NOT NULL DEFAULT '',
                 PRIMARY KEY (repo, source_type, number, model, prompt_version, input_hash)
             );
+            """
+        )
+        self._create_packs_table()
+        self._migrate_packs_schema()
+        self._conn.commit()
 
+    def _create_packs_table(self) -> None:
+        self._conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS packs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 repo TEXT NOT NULL,
@@ -55,12 +63,51 @@ class CacheStore:
                 source_updated_at TEXT NOT NULL,
                 generated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 stale INTEGER NOT NULL DEFAULT 0,
-                version INTEGER NOT NULL,
+                version INTEGER NOT NULL DEFAULT 0,
                 UNIQUE (repo, source_type, number)
-            );
+            )
             """
         )
-        self._conn.commit()
+
+    def _migrate_packs_schema(self) -> None:
+        columns = self._pack_columns("packs")
+        if {"id", "version"}.issubset(columns):
+            return
+
+        legacy_rows = self._conn.execute(
+            """
+            SELECT repo, source_type, number, path, status, confidence, source_updated_at, generated_at, stale
+            FROM packs
+            ORDER BY generated_at ASC, rowid ASC
+            """
+        ).fetchall()
+        self._conn.execute("ALTER TABLE packs RENAME TO packs_old")
+        self._create_packs_table()
+        for version, row in enumerate(legacy_rows, start=1):
+            self._conn.execute(
+                """
+                INSERT INTO packs
+                    (repo, source_type, number, path, status, confidence, source_updated_at, generated_at, stale, version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["repo"],
+                    row["source_type"],
+                    row["number"],
+                    row["path"],
+                    row["status"],
+                    row["confidence"],
+                    row["source_updated_at"],
+                    row["generated_at"],
+                    row["stale"],
+                    version,
+                ),
+            )
+        self._conn.execute("DROP TABLE packs_old")
+
+    def _pack_columns(self, table_name: str) -> set[str]:
+        rows = self._conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        return {row["name"] for row in rows}
 
     def upsert_item(
         self,
@@ -128,24 +175,29 @@ class CacheStore:
         confidence: str,
         source_updated_at: str,
     ) -> None:
-        next_version = self._next_pack_version()
-        self._conn.execute(
-            """
-            INSERT INTO packs
-                (repo, source_type, number, path, status, confidence, source_updated_at, stale, version)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
-            ON CONFLICT(repo, source_type, number) DO UPDATE SET
-                path = excluded.path,
-                status = excluded.status,
-                confidence = excluded.confidence,
-                source_updated_at = excluded.source_updated_at,
-                generated_at = CURRENT_TIMESTAMP,
-                stale = 0,
-                version = excluded.version
-            """,
-            (repo, source_type, number, str(path), status, confidence, source_updated_at, next_version),
-        )
-        self._conn.commit()
+        try:
+            self._conn.execute("BEGIN IMMEDIATE")
+            next_version = self._next_pack_version()
+            self._conn.execute(
+                """
+                INSERT INTO packs
+                    (repo, source_type, number, path, status, confidence, source_updated_at, stale, version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
+                ON CONFLICT(repo, source_type, number) DO UPDATE SET
+                    path = excluded.path,
+                    status = excluded.status,
+                    confidence = excluded.confidence,
+                    source_updated_at = excluded.source_updated_at,
+                    generated_at = CURRENT_TIMESTAMP,
+                    stale = 0,
+                    version = excluded.version
+                """,
+                (repo, source_type, number, str(path), status, confidence, source_updated_at, next_version),
+            )
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
 
     def _next_pack_version(self) -> int:
         row = self._conn.execute("SELECT COALESCE(MAX(version), 0) + 1 AS next_version FROM packs").fetchone()
@@ -156,7 +208,7 @@ class CacheStore:
             """
             SELECT repo, source_type, number, path, status, confidence, source_updated_at, generated_at, stale
             FROM packs
-            ORDER BY version DESC
+            ORDER BY version DESC, id DESC
             """
         ).fetchall()
         return [dict(row) for row in rows]
