@@ -3,6 +3,14 @@ from dataclasses import dataclass, field
 
 
 @dataclass
+class GHComment:
+    author: str
+    body: str
+    url: str
+    created_at: str
+
+
+@dataclass
 class GHIssue:
     number: int
     title: str
@@ -13,12 +21,17 @@ class GHIssue:
     state: str         # "open" | "closed"
     score: float = 0.0  # filled by ranker
     reason: str = ""
+    updated_at: str = ""
+    comments: list[GHComment] = field(default_factory=list)
 
 
 @dataclass
 class PRFile:
     filename: str
     patch: str          # raw unified diff
+    status: str = ""
+    additions: int = 0
+    deletions: int = 0
 
 
 @dataclass
@@ -30,3 +43,4 @@ class GHPR:
     repo: str
     files: list[PRFile] = field(default_factory=list)
     score: float = 0.0
+    updated_at: str = ""

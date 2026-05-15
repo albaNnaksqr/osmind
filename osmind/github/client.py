@@ -1,6 +1,10 @@
 from __future__ import annotations
 from github import Github
-from osmind.github.models import GHIssue, GHPR, PRFile
+from osmind.github.models import GHComment, GHIssue, GHPR, PRFile
+
+
+def _iso(dt) -> str:
+    return dt.isoformat() if dt else ""
 
 
 class GitHubClient:
@@ -16,6 +20,16 @@ class GitHubClient:
         for i in r.get_issues(state=state):
             if len(issues) >= limit:
                 break
+            comments = []
+            for c in i.get_comments():
+                if len(comments) >= 5:
+                    break
+                comments.append(GHComment(
+                    author=c.user.login if c.user else "",
+                    body=c.body or "",
+                    url=c.html_url,
+                    created_at=_iso(c.created_at),
+                ))
             issues.append(GHIssue(
                 number=i.number,
                 title=i.title,
@@ -24,6 +38,8 @@ class GitHubClient:
                 url=i.html_url,
                 repo=repo,
                 state=i.state,
+                updated_at=_iso(i.updated_at),
+                comments=comments,
             ))
         return issues
 
@@ -31,7 +47,13 @@ class GitHubClient:
         r = self._gh.get_repo(repo)
         p = r.get_pull(number)
         files = [
-            PRFile(filename=f.filename, patch=f.patch or "")
+            PRFile(
+                filename=f.filename,
+                patch=f.patch or "",
+                status=f.status or "",
+                additions=f.additions or 0,
+                deletions=f.deletions or 0,
+            )
             for f in p.get_files()
         ]
         return GHPR(
@@ -41,6 +63,7 @@ class GitHubClient:
             url=p.html_url,
             repo=repo,
             files=files,
+            updated_at=_iso(p.updated_at),
         )
 
     def get_merged_prs(self, repo: str, limit: int = 20) -> list[GHPR]:
@@ -56,5 +79,6 @@ class GitHubClient:
                     body=p.body or "",
                     url=p.html_url,
                     repo=repo,
+                    updated_at=_iso(p.updated_at),
                 ))
         return prs
