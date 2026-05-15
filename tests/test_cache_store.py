@@ -56,3 +56,16 @@ def test_cache_records_pack_metadata(tmp_path: Path):
     assert packs[0]["source_type"] == "pr"
     assert packs[0]["number"] == 7
     assert packs[0]["path"] == str(pack_path)
+
+
+def test_cache_lists_same_second_packs_newest_first(tmp_path: Path):
+    store = CacheStore(tmp_path / "osmind.db")
+    store.upsert_pack("o/r", "issue", 1, tmp_path / "first.md", "unread", "unknown", "u1")
+    store.upsert_pack("o/r", "issue", 2, tmp_path / "second.md", "unread", "unknown", "u2")
+
+    store._conn.execute("UPDATE packs SET generated_at = '2026-05-15 01:02:03'")
+    store._conn.commit()
+
+    packs = store.list_packs()
+
+    assert [pack["number"] for pack in packs] == [2, 1]

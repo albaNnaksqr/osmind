@@ -45,6 +45,7 @@ class CacheStore:
             );
 
             CREATE TABLE IF NOT EXISTS packs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 repo TEXT NOT NULL,
                 source_type TEXT NOT NULL,
                 number INTEGER NOT NULL,
@@ -54,7 +55,7 @@ class CacheStore:
                 source_updated_at TEXT NOT NULL,
                 generated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 stale INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (repo, source_type, number)
+                UNIQUE (repo, source_type, number)
             );
             """
         )
@@ -148,7 +149,7 @@ class CacheStore:
             """
             SELECT repo, source_type, number, path, status, confidence, source_updated_at, generated_at, stale
             FROM packs
-            ORDER BY generated_at DESC
+            ORDER BY generated_at DESC, id DESC
             """
         ).fetchall()
         return [dict(row) for row in rows]
