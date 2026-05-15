@@ -1,0 +1,43 @@
+from __future__ import annotations
+
+from datetime import date
+
+import yaml
+
+from osmind.packs.models import LearningPack
+
+
+def _heading(pack: LearningPack) -> str:
+    label = "PR" if pack.source.source_type == "pr" else "Issue"
+    return f"# {label} #{pack.source.number}: {pack.source.title}"
+
+
+def render_pack(pack: LearningPack) -> str:
+    frontmatter = {
+        "type": "osmind-learning-pack",
+        "source_type": pack.source.source_type,
+        "repo": pack.source.repo,
+        "number": pack.source.number,
+        "title": pack.source.title,
+        "url": pack.source.url,
+        "status": pack.status,
+        "confidence": pack.confidence,
+        "generated_at": str(date.today()),
+        "source_updated_at": pack.source.updated_at,
+        "modules": pack.modules,
+        "tags": pack.tags,
+    }
+    lines = [
+        "---",
+        yaml.dump(frontmatter, allow_unicode=True, sort_keys=False).strip(),
+        "---",
+        "",
+        _heading(pack),
+        "",
+    ]
+    for section in pack.sections:
+        lines.append(f"## {section.title}")
+        lines.append("")
+        lines.append(section.body.strip())
+        lines.append("")
+    return "\n".join(lines) + "\n"
