@@ -152,4 +152,35 @@ async def test_switching_to_packs_lazy_loads_existing_packs(temp_config):
         table = app.query_one("#packs-table", DataTable)
         assert table.row_count == 0
         app.action_switch_tab("packs")
+        await pilot.pause()
+        assert table.row_count == 1
+
+
+@pytest.mark.asyncio
+async def test_direct_tab_activation_lazy_loads_existing_packs(temp_config):
+    from osmind.github.models import GHPR
+    from osmind.services.library import PackLibrary
+    from textual.widgets import DataTable, TabbedContent
+
+    library = PackLibrary(
+        temp_config.notes_vault,
+        temp_config.notes_vault / "osmind" / ".cache" / "osmind.db",
+    )
+    library.write_pr_pack(
+        GHPR(
+            number=10,
+            title="Clicked Pack",
+            body="",
+            url="https://github.com/o/r/pull/10",
+            repo="o/r",
+            updated_at="u10",
+        )
+    )
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        table = app.query_one("#packs-table", DataTable)
+        assert table.row_count == 0
+        app.query_one(TabbedContent).active = "packs"
+        await pilot.pause()
         assert table.row_count == 1
