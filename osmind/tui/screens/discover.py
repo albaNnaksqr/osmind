@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 import os
+from pathlib import Path
 from textual.app import ComposeResult
 from textual.widgets import Label, LoadingIndicator, Select, Static
 from textual.containers import Vertical, Horizontal
@@ -24,7 +25,7 @@ class DiscoverScreen(Vertical):
     def __init__(self):
         super().__init__()
         self._issues_by_number: dict[str, object] = {}
-        self._pack_paths_by_number: dict[str, str] = {}
+        self._pack_paths_by_key: dict[tuple[str, str, int], str] = {}
 
     def compose(self) -> ComposeResult:
         watching = self.app.config.watching
@@ -128,13 +129,29 @@ class DiscoverScreen(Vertical):
         cache_path = self.app.config.notes_vault / "osmind" / ".cache" / "osmind.db"
         return PackLibrary(self.app.config.notes_vault, cache_path)
 
+    def _pack_key(self, issue) -> tuple[str, str, int]:
+        return (issue.repo, "issue", issue.number)
+
+    def _pack_path_for_issue(self, issue) -> Path | None:
+        path = self._pack_paths_by_key.get(self._pack_key(issue))
+        if path and Path(path).exists():
+            return Path(path)
+
+        cached_pack = self._library().cache.get_pack(issue.repo, "issue", issue.number)
+        if cached_pack and cached_pack.get("path"):
+            cached_path = Path(cached_pack["path"])
+            if cached_path.exists():
+                return cached_path
+
+        return None
+
     async def action_generate_pack(self) -> None:
         issue = self._get_selected_issue()
         if not issue:
             self.notify("先选中一个 issue", severity="warning")
             return
         path = await asyncio.to_thread(lambda: self._library().write_issue_pack(issue))
-        self._pack_paths_by_number[str(issue.number)] = str(path)
+        self._pack_paths_by_key[self._pack_key(issue)] = str(path)
         self.notify(f"Learning Pack saved: {path}", timeout=5)
 
     def action_open_pack(self) -> None:
@@ -142,13 +159,11 @@ class DiscoverScreen(Vertical):
         if not issue:
             self.notify("先选中一个 issue", severity="warning")
             return
-        path = self._pack_paths_by_number.get(str(issue.number))
+        path = self._pack_path_for_issue(issue)
         if not path:
             self.notify("No pack generated for selected issue", severity="warning")
             return
-        from pathlib import Path
-
-        open_path(Path(path))
+        open_path(path)
 
     async def action_launch_claude(self) -> None:
         issue = self._get_selected_issue()

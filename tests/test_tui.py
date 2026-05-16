@@ -246,3 +246,89 @@ async def test_discover_open_pack_uses_generated_pack_path(temp_config, monkeypa
         discover.action_open_pack()
 
     assert opened == [temp_config.notes_vault / "osmind" / "o_r" / "issue-42-tokenizer-leak.md"]
+
+
+@pytest.mark.asyncio
+async def test_discover_open_pack_uses_cached_pack_without_in_memory_path(temp_config, monkeypatch):
+    from osmind.github.models import GHIssue
+    from osmind.services.library import PackLibrary
+    from osmind.tui.screens.discover import DiscoverScreen
+
+    issue = GHIssue(
+        number=42,
+        title="Tokenizer leak",
+        body="Body",
+        labels=["bug"],
+        url="https://github.com/o/r/issues/42",
+        repo="o/r",
+        state="open",
+        updated_at="u42",
+    )
+    path = PackLibrary(
+        temp_config.notes_vault,
+        temp_config.notes_vault / "osmind" / ".cache" / "osmind.db",
+    ).write_issue_pack(issue)
+    opened = []
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        monkeypatch.setattr(discover, "_get_selected_issue", lambda: issue)
+        monkeypatch.setattr("osmind.tui.screens.discover.open_path", lambda opened_path: opened.append(opened_path))
+        discover.action_open_pack()
+
+    assert opened == [path]
+
+
+@pytest.mark.asyncio
+async def test_discover_open_pack_ignores_missing_cached_file(temp_config, monkeypatch):
+    from osmind.github.models import GHIssue
+    from osmind.services.library import PackLibrary
+    from osmind.tui.screens.discover import DiscoverScreen
+
+    issue = GHIssue(
+        number=42,
+        title="Tokenizer leak",
+        body="Body",
+        labels=["bug"],
+        url="https://github.com/o/r/issues/42",
+        repo="o/r",
+        state="open",
+        updated_at="u42",
+    )
+    path = PackLibrary(
+        temp_config.notes_vault,
+        temp_config.notes_vault / "osmind" / ".cache" / "osmind.db",
+    ).write_issue_pack(issue)
+    path.unlink()
+    opened = []
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        monkeypatch.setattr(discover, "_get_selected_issue", lambda: issue)
+        monkeypatch.setattr("osmind.tui.screens.discover.open_path", lambda opened_path: opened.append(opened_path))
+        discover.action_open_pack()
+
+    assert opened == []
+
+
+@pytest.mark.asyncio
+async def test_discover_open_pack_does_not_confuse_same_number_different_repos(temp_config, monkeypatch):
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+
+    first_issue = GHIssue(42, "First", "Body", [], "https://github.com/a/r/issues/42", "a/r", "open")
+    second_issue = GHIssue(42, "Second", "Body", [], "https://github.com/b/r/issues/42", "b/r", "open")
+    opened = []
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        monkeypatch.setattr("osmind.tui.screens.discover.open_path", lambda path: opened.append(path))
+        monkeypatch.setattr(discover, "_get_selected_issue", lambda: first_issue)
+        await discover.action_generate_pack()
+        monkeypatch.setattr(discover, "_get_selected_issue", lambda: second_issue)
+        discover.action_open_pack()
+
+    assert opened == []
