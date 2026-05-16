@@ -111,3 +111,45 @@ async def test_packs_open_uses_visible_row_key_after_sort(temp_config, monkeypat
         app.query_one("PacksScreen").action_open_pack()
 
     assert opened == [first]
+
+
+@pytest.mark.asyncio
+async def test_packs_open_empty_table_does_not_crash(temp_config, monkeypatch):
+    opened = []
+    monkeypatch.setattr("osmind.tui.screens.packs.open_path", lambda path: opened.append(path))
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        app.action_switch_tab("packs")
+        app.query_one("PacksScreen").action_open_pack()
+
+    assert opened == []
+
+
+@pytest.mark.asyncio
+async def test_switching_to_packs_lazy_loads_existing_packs(temp_config):
+    from osmind.github.models import GHPR
+    from osmind.services.library import PackLibrary
+    from textual.widgets import DataTable
+
+    library = PackLibrary(
+        temp_config.notes_vault,
+        temp_config.notes_vault / "osmind" / ".cache" / "osmind.db",
+    )
+    library.write_pr_pack(
+        GHPR(
+            number=9,
+            title="Existing Pack",
+            body="",
+            url="https://github.com/o/r/pull/9",
+            repo="o/r",
+            updated_at="u9",
+        )
+    )
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        table = app.query_one("#packs-table", DataTable)
+        assert table.row_count == 0
+        app.action_switch_tab("packs")
+        assert table.row_count == 1

@@ -39,6 +39,8 @@ class OsmindApp(App):
 
     def action_switch_tab(self, tab: str) -> None:
         self.query_one(TabbedContent).active = tab
+        if tab == "packs":
+            self.query_one(PacksScreen).action_reload()
 
 
 def main():

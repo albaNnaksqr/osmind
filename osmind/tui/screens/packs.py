@@ -58,7 +58,7 @@ class PacksScreen(Vertical):
 
     def action_open_pack(self) -> None:
         table = self.query_one("#packs-table", DataTable)
-        if table.cursor_row is None:
+        if table.cursor_row is None or table.cursor_row >= len(table.ordered_rows):
             self.notify("No pack selected", severity="warning")
             return
         row_key = table.ordered_rows[table.cursor_row].key
