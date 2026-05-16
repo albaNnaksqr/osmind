@@ -35,10 +35,11 @@ async def test_tab_navigation(mock_config):
         # Verify BINDINGS list covers all three tabs
         binding_actions = {b[1] for b in app.BINDINGS}
         assert "switch_tab('discover')" in binding_actions
-        assert "switch_tab('learn')" in binding_actions
+        assert "switch_tab('packs')" in binding_actions
         assert "switch_tab('review')" in binding_actions
         # Verify tab IDs exist in the TabbedContent
         tab_ids = {pane.id for pane in tabs.query("TabPane")}
         assert "discover" in tab_ids
-        assert "learn" in tab_ids
+        assert "packs" in tab_ids
+        assert "learn" not in tab_ids
         assert "review" in tab_ids

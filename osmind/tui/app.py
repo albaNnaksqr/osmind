@@ -7,7 +7,7 @@ from textual.widgets import Header, Footer, TabbedContent, TabPane
 
 from osmind.config import Config
 from osmind.tui.screens.discover import DiscoverScreen
-from osmind.tui.screens.learn import LearnScreen
+from osmind.tui.screens.packs import PacksScreen
 from osmind.tui.screens.review import ReviewScreen
 
 
@@ -17,7 +17,7 @@ class OsmindApp(App):
     """
     BINDINGS = [
         ("d", "switch_tab('discover')", "Discover"),
-        ("l", "switch_tab('learn')", "Learn"),
+        ("p", "switch_tab('packs')", "Packs"),
         ("r", "switch_tab('review')", "Review"),
         ("q", "quit", "Quit"),
     ]
@@ -31,8 +31,8 @@ class OsmindApp(App):
         with TabbedContent(initial="discover"):
             with TabPane("Discover", id="discover"):
                 yield DiscoverScreen()
-            with TabPane("Learn", id="learn"):
-                yield LearnScreen()
+            with TabPane("Packs", id="packs"):
+                yield PacksScreen()
             with TabPane("Review", id="review"):
                 yield ReviewScreen()
         yield Footer()
