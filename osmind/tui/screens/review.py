@@ -44,7 +44,7 @@ class ReviewScreen(Vertical):
         log.clear()
 
         if not self._notes:
-            log.write("[dim]还没有笔记。去 Learn 模式读几个 PR，用 Ctrl+S 保存笔记。[/dim]")
+            log.write("[dim]还没有笔记。先在 Discover 里生成 Learning Pack，或去 Packs 查看已生成内容。[/dim]")
             return
 
         for idx, note in enumerate(self._notes):

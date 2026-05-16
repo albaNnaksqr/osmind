@@ -19,11 +19,25 @@ def mock_config():
     )
 
 
+@pytest.fixture
+def temp_config(tmp_path):
+    return Config(
+        interests=["SGLang"],
+        skills=["Python"],
+        resources={},
+        watching=[{"repo": "sgl-project/sglang"}],
+        notes_vault=tmp_path / "vault",
+        llm=LLMConfig(base_url="http://localhost:1234/v1", model="test", api_key="test"),
+        external_agents=AgentConfig(claude_code="claude", codex="codex"),
+    )
+
+
 @pytest.mark.asyncio
-async def test_app_composes(mock_config):
-    app = OsmindApp(mock_config)
+async def test_app_composes_without_creating_pack_cache(temp_config):
+    app = OsmindApp(temp_config)
     async with app.run_test() as pilot:
         assert app.query_one("TabbedContent") is not None
+    assert not (temp_config.notes_vault / "osmind" / ".cache" / "osmind.db").exists()
 
 
 @pytest.mark.asyncio
@@ -43,3 +57,57 @@ async def test_tab_navigation(mock_config):
         assert "packs" in tab_ids
         assert "learn" not in tab_ids
         assert "review" in tab_ids
+
+
+def test_discover_has_no_learn_binding():
+    from osmind.tui.screens.discover import DiscoverScreen
+
+    binding_actions = {b[1] for b in DiscoverScreen.BINDINGS}
+
+    assert "open_in_learn" not in binding_actions
+    assert all("learn" not in action for action in binding_actions)
+
+
+@pytest.mark.asyncio
+async def test_packs_open_uses_visible_row_key_after_sort(temp_config, monkeypatch):
+    from osmind.github.models import GHPR
+    from osmind.services.library import PackLibrary
+    from textual.widgets import DataTable
+
+    library = PackLibrary(
+        temp_config.notes_vault,
+        temp_config.notes_vault / "osmind" / ".cache" / "osmind.db",
+    )
+    first = library.write_pr_pack(
+        GHPR(
+            number=1,
+            title="First Pack",
+            body="",
+            url="https://github.com/o/r/pull/1",
+            repo="o/r",
+            updated_at="u1",
+        )
+    )
+    second = library.write_pr_pack(
+        GHPR(
+            number=2,
+            title="Second Pack",
+            body="",
+            url="https://github.com/o/r/pull/2",
+            repo="o/r",
+            updated_at="u2",
+        )
+    )
+    opened = []
+    monkeypatch.setattr("osmind.tui.screens.packs.open_path", lambda path: opened.append(path))
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        app.action_switch_tab("packs")
+        table = app.query_one("#packs-table", DataTable)
+        app.query_one("PacksScreen").action_reload()
+        table.sort("number", key=lambda value: int(str(value)), reverse=False)
+        table.cursor_coordinate = (0, 0)
+        app.query_one("PacksScreen").action_open_pack()
+
+    assert opened == [first]
