@@ -14,7 +14,6 @@ class DiscoverScreen(Vertical):
     """
     BINDINGS = [
         ("f", "fetch", "Fetch Issues"),
-        ("p", "open_in_learn", "Open in Learn"),
         ("c", "launch_claude", "Claude Code"),
         ("x", "launch_codex", "Codex"),
     ]
@@ -73,7 +72,7 @@ class DiscoverScreen(Vertical):
             table = self.query_one(IssueTable)
             table.populate(issues)
             table.focus()
-            hint.update(f"  {len(issues)} issues • 评分中…  ↑↓ navigate  p: Open in Learn")
+            hint.update(f"  {len(issues)} issues • 评分中…  ↑↓ navigate")
             loader.display = False
 
             # Phase 2: score each issue in background, update table as we go
@@ -104,7 +103,7 @@ class DiscoverScreen(Vertical):
                 self.query_one(IssueTable).update_score(str(scored.number), scored.score)
 
             hint = self.query_one("#hint", Label)
-            hint.update("  ↑↓ navigate  p: Open in Learn  c: Claude  x: Codex")
+            hint.update("  ↑↓ navigate  c: Claude  x: Codex")
         except Exception as e:
             self.notify(f"评分出错: {e}", severity="warning")
 
@@ -118,18 +117,6 @@ class DiscoverScreen(Vertical):
             return self._issues_by_number.get(issue_number)
         except Exception:
             return None
-
-    def action_open_in_learn(self) -> None:
-        issue = self._get_selected_issue()
-        if not issue:
-            self.notify("先选中一个 issue", severity="warning")
-            return
-        # Switch to Learn tab — user can find related PRs there
-        self.app.action_switch_tab("learn")
-        self.notify(
-            f"已切换到 Learn。在左侧 PR 列表里按 f 加载 {issue.repo} 的近期 PR。",
-            timeout=5,
-        )
 
     async def action_launch_claude(self) -> None:
         issue = self._get_selected_issue()
