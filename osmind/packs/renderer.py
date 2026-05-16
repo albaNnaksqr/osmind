@@ -41,3 +41,18 @@ def render_pack(pack: LearningPack) -> str:
         lines.append(section.body.strip())
         lines.append("")
     return "\n".join(lines) + "\n"
+
+
+def parse_pack_frontmatter(text: str) -> dict:
+    if not text.startswith("---\n"):
+        raise ValueError("Pack is missing YAML frontmatter")
+
+    try:
+        _prefix, raw, _body = text.split("---", 2)
+    except ValueError as exc:
+        raise ValueError("Pack is missing YAML frontmatter") from exc
+
+    data = yaml.safe_load(raw) or {}
+    if not isinstance(data, dict) or data.get("type") != "osmind-learning-pack":
+        raise ValueError("Not an osmind Learning Pack")
+    return data

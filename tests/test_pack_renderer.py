@@ -3,7 +3,7 @@ import re
 import yaml
 
 from osmind.packs.models import LearningPack, PackSection, SourceRef
-from osmind.packs.renderer import render_pack
+from osmind.packs.renderer import parse_pack_frontmatter, render_pack
 
 
 def _frontmatter(rendered: str) -> dict:
@@ -74,3 +74,28 @@ def test_render_pack_uses_issue_heading_and_default_tags():
     assert frontmatter["tags"] == ["osmind", "open-source"]
     assert "# Issue #42: Tokenizer leak" in rendered
     assert "## Context\n\nMemory grows under load." in rendered
+
+
+def test_parse_pack_frontmatter_reads_status_and_confidence():
+    text = """---
+type: osmind-learning-pack
+source_type: pr
+repo: o/r
+number: 7
+title: Refactor runner
+url: https://github.com/o/r/pull/7
+status: reading
+confidence: low
+generated_at: 2026-05-15
+source_updated_at: u1
+modules: []
+tags: []
+---
+
+# PR #7: Refactor runner
+"""
+
+    data = parse_pack_frontmatter(text)
+
+    assert data["status"] == "reading"
+    assert data["confidence"] == "low"

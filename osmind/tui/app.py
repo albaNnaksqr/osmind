@@ -43,6 +43,8 @@ class OsmindApp(App):
     def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
         if event.pane.id == "packs":
             self.query_one(PacksScreen).action_reload()
+        elif event.pane.id == "review":
+            self.query_one(ReviewScreen).action_reload()
 
 
 def main():

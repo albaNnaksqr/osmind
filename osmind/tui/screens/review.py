@@ -1,5 +1,6 @@
 from __future__ import annotations
 import asyncio
+from pathlib import Path
 from textual.app import ComposeResult
 from textual.widgets import DataTable, Input, Label, LoadingIndicator, RichLog
 from textual.containers import Horizontal, Vertical
@@ -20,9 +21,9 @@ class ReviewScreen(Vertical):
     def compose(self) -> ComposeResult:
         with Horizontal():
             with Vertical(id="notes-pane"):
-                yield Label("[bold]Saved Notes[/bold]", markup=True)
+                yield Label("[bold]Learning Packs[/bold]", markup=True)
                 yield DataTable(id="notes-table", cursor_type="row")
-                yield Label("[dim]Enter: review note  a: review all[/dim]", markup=True)
+                yield Label("[dim]Enter: review pack  a: review all[/dim]", markup=True)
             with Vertical(id="qa-pane"):
                 yield LoadingIndicator(id="loader")
                 yield RichLog(id="review-log", wrap=True, markup=True)
@@ -30,13 +31,18 @@ class ReviewScreen(Vertical):
 
     def on_mount(self) -> None:
         table = self.query_one("#notes-table", DataTable)
-        table.add_columns("PR", "Repo")
+        table.add_columns("Item", "Repo")
         self._load_notes_list()
 
     def _load_notes_list(self) -> None:
-        from osmind.notes.vault import NotesVault
-        vault = NotesVault(self.app.config.notes_vault)
-        self._notes = vault.list_all()
+        cache_path = self.app.config.notes_vault / "osmind" / ".cache" / "osmind.db"
+        if cache_path.exists():
+            from osmind.services.library import PackLibrary
+
+            library = PackLibrary(self.app.config.notes_vault, cache_path)
+            self._notes = library.list_packs()
+        else:
+            self._notes = []
 
         table = self.query_one("#notes-table", DataTable)
         table.clear()
@@ -44,22 +50,26 @@ class ReviewScreen(Vertical):
         log.clear()
 
         if not self._notes:
-            log.write("[dim]还没有笔记。先在 Discover 里生成 Learning Pack，或去 Packs 查看已生成内容。[/dim]")
+            log.write("[dim]还没有 Learning Pack。先在 Discover 里生成，或去 Packs 查看已生成内容。[/dim]")
             return
 
         for idx, note in enumerate(self._notes):
+            item_label = "PR" if note["source_type"] == "pr" else "Issue"
             table.add_row(
-                f"#{note.pr_number}",
-                note.repo.split("/")[-1],
+                f"{item_label} #{note['number']}",
+                note["repo"].split("/")[-1],
                 key=str(idx),
             )
         log.write(
-            f"[bold]{len(self._notes)} 篇笔记[/bold]\n\n"
-            "选中一篇笔记按 [bold]Enter[/bold] 开始针对性复习，\n"
-            "或按 [bold]a[/bold] 让 osmind 从所有笔记里找知识盲点提问。\n"
+            f"[bold]{len(self._notes)} 个 Learning Pack[/bold]\n\n"
+            "选中一个 pack 按 [bold]Enter[/bold] 开始针对性复习，\n"
+            "或按 [bold]a[/bold] 让 osmind 从所有 pack 里找知识盲点提问。\n"
         )
         self._current_note = None
         self._current_q = None
+
+    def action_reload(self) -> None:
+        self._load_notes_list()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         idx = int(event.row_key.value)
@@ -68,20 +78,24 @@ class ReviewScreen(Vertical):
 
     async def _start_note_review(self, note) -> None:
         from osmind.engine.llm import LLMClient
+        from osmind.packs.renderer import parse_pack_frontmatter
+
         log = self.query_one(RichLog)
         loader = self.query_one("#loader", LoadingIndicator)
         loader.display = True
-        log.write(
-            f"\n[bold cyan]复习 PR #{note.pr_number}:[/bold cyan] {note.pr_title}\n"
-        )
         try:
             llm_cfg = self.app.config.llm
-            content = note.content
+            content = Path(note["path"]).read_text(encoding="utf-8")
+            frontmatter = parse_pack_frontmatter(content)
+            item_label = "PR" if note["source_type"] == "pr" else "Issue"
+            log.write(
+                f"\n[bold cyan]复习 {item_label} #{note['number']}:[/bold cyan] {frontmatter.get('title', '')}\n"
+            )
 
             def _ask():
                 llm = LLMClient(llm_cfg)
                 return llm.chat(
-                    "你是一个 Socratic 学习助手。根据用户关于这个 PR 的笔记，"
+                    "你是一个 Socratic 学习助手。根据用户关于这个开源仓库条目的 Learning Pack，"
                     "用中文提一个能加深理解的问题。只问一个问题，不超过60字。",
                     content[:600],
                     max_tokens=100,
@@ -110,15 +124,23 @@ class ReviewScreen(Vertical):
         log.write("\n[bold cyan]全部笔记综合复习[/bold cyan]\n")
         try:
             llm_cfg = self.app.config.llm
-            combined = "\n\n".join(
-                f"PR #{n.pr_number} ({n.repo}): {n.content[:300]}"
-                for n in self._notes[-5:]
-            )
+            snippets = []
+            for note in self._notes[-5:]:
+                path = Path(note["path"])
+                if not path.exists():
+                    continue
+                content = path.read_text(encoding="utf-8")
+                item_label = "PR" if note["source_type"] == "pr" else "Issue"
+                snippets.append(f"{item_label} #{note['number']} ({note['repo']}): {content[:300]}")
+            combined = "\n\n".join(snippets)
+            if not combined:
+                self.notify("没有可读取的 Learning Pack", severity="warning")
+                return
 
             def _ask():
                 llm = LLMClient(llm_cfg)
                 return llm.chat(
-                    "你是一个 Socratic 学习助手。根据用户多篇 PR 笔记，"
+                    "你是一个 Socratic 学习助手。根据用户多个 Learning Pack，"
                     "找出知识盲点或矛盾，用中文提一个综合性问题。只问一个问题，不超过60字。",
                     combined,
                     max_tokens=100,
@@ -140,15 +162,25 @@ class ReviewScreen(Vertical):
         log.write(f"[bold green]你:[/bold green] {event.value}\n")
 
         if self._current_note is not None:
-            from osmind.notes.vault import NotesVault
-            vault = NotesVault(self.app.config.notes_vault)
-            vault.append_answer(
-                self._current_note.repo,
-                self._current_note.pr_number,
+            _append_answer_to_pack(
+                Path(self._current_note["path"]),
                 self._current_q,
                 event.value,
             )
 
         event.input.value = ""
         self._current_q = None
-        log.write("[dim]回答已保存。选一篇笔记继续，或按 a 综合复习。[/dim]\n")
+        log.write("[dim]回答已保存。选一个 pack 继续，或按 a 综合复习。[/dim]\n")
+
+
+def _append_answer_to_pack(path: Path, question: str, answer: str) -> None:
+    if not path.exists():
+        return
+
+    text = path.read_text(encoding="utf-8").rstrip()
+    entry = f"**Q: {question}**\n\n{answer.strip()}"
+    if "\n## Notes\n" in f"\n{text}\n":
+        updated = f"{text}\n\n{entry}\n"
+    else:
+        updated = f"{text}\n\n## Notes\n\n{entry}\n"
+    path.write_text(updated, encoding="utf-8")

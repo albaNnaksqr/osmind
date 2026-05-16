@@ -187,6 +187,60 @@ async def test_direct_tab_activation_lazy_loads_existing_packs(temp_config):
 
 
 @pytest.mark.asyncio
+async def test_switching_to_review_lazy_loads_existing_packs(temp_config):
+    from osmind.github.models import GHPR
+    from osmind.services.library import PackLibrary
+    from textual.widgets import DataTable
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        table = app.query_one("#notes-table", DataTable)
+        assert table.row_count == 0
+        library = PackLibrary(
+            temp_config.notes_vault,
+            temp_config.notes_vault / "osmind" / ".cache" / "osmind.db",
+        )
+        library.write_pr_pack(
+            GHPR(
+                number=11,
+                title="Reviewable Pack",
+                body="",
+                url="https://github.com/o/r/pull/11",
+                repo="o/r",
+                updated_at="u11",
+            )
+        )
+        app.action_switch_tab("review")
+        await pilot.pause()
+        assert table.row_count == 1
+
+
+def test_review_answer_appends_to_pack_notes(tmp_path):
+    from osmind.tui.screens.review import _append_answer_to_pack
+
+    path = tmp_path / "pack.md"
+    path.write_text(
+        """---
+type: osmind-learning-pack
+---
+
+# PR #7: Refactor runner
+
+## Notes
+
+Existing note.
+""",
+        encoding="utf-8",
+    )
+
+    _append_answer_to_pack(path, "What changed?", "The runner flow changed.")
+
+    text = path.read_text(encoding="utf-8")
+    assert "Existing note." in text
+    assert "**Q: What changed?**\n\nThe runner flow changed." in text
+
+
+@pytest.mark.asyncio
 async def test_discover_generate_pack_writes_selected_issue(temp_config, monkeypatch):
     from osmind.github.models import GHIssue
     from osmind.tui.screens.discover import DiscoverScreen
