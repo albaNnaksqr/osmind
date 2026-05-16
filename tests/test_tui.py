@@ -184,3 +184,65 @@ async def test_direct_tab_activation_lazy_loads_existing_packs(temp_config):
         app.query_one(TabbedContent).active = "packs"
         await pilot.pause()
         assert table.row_count == 1
+
+
+@pytest.mark.asyncio
+async def test_discover_generate_pack_writes_selected_issue(temp_config, monkeypatch):
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+
+    issue = GHIssue(
+        number=42,
+        title="Tokenizer leak",
+        body="Body",
+        labels=["bug"],
+        url="https://github.com/o/r/issues/42",
+        repo="o/r",
+        state="open",
+        updated_at="u42",
+    )
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        monkeypatch.setattr(discover, "_get_selected_issue", lambda: issue)
+        await discover.action_generate_pack()
+
+    path = temp_config.notes_vault / "osmind" / "o_r" / "issue-42-tokenizer-leak.md"
+    assert path.exists()
+    assert "# Issue #42: Tokenizer leak" in path.read_text(encoding="utf-8")
+
+
+def test_discover_bindings_include_generate_and_open_pack():
+    from osmind.tui.screens.discover import DiscoverScreen
+
+    binding_actions = {b[1] for b in DiscoverScreen.BINDINGS}
+
+    assert "generate_pack" in binding_actions
+    assert "open_pack" in binding_actions
+
+
+@pytest.mark.asyncio
+async def test_discover_open_pack_uses_generated_pack_path(temp_config, monkeypatch):
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+
+    issue = GHIssue(
+        number=42,
+        title="Tokenizer leak",
+        body="Body",
+        labels=["bug"],
+        url="https://github.com/o/r/issues/42",
+        repo="o/r",
+        state="open",
+        updated_at="u42",
+    )
+    opened = []
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        monkeypatch.setattr(discover, "_get_selected_issue", lambda: issue)
+        monkeypatch.setattr("osmind.tui.screens.discover.open_path", lambda path: opened.append(path))
+        await discover.action_generate_pack()
+        discover.action_open_pack()
+
+    assert opened == [temp_config.notes_vault / "osmind" / "o_r" / "issue-42-tokenizer-leak.md"]
