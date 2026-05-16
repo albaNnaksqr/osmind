@@ -130,16 +130,19 @@ def _preserve_notes_section(generated_markdown: str, existing_markdown: str) -> 
 
 
 def _section_from_notes(markdown: str) -> str | None:
-    match = re.search(r"(?m)^## Notes\s*$", markdown)
-    if match is None:
+    matches = list(re.finditer(r"(?m)^## Notes\s*$", markdown))
+    if not matches:
         return None
-    return markdown[match.start() :]
+    match = matches[-1]
+    body = markdown[match.end() :].lstrip()
+    return f"## Notes\n\n{body}"
 
 
 def _section_before_notes(markdown: str) -> str | None:
-    match = re.search(r"(?m)^## Notes\s*$", markdown)
-    if match is None:
+    matches = list(re.finditer(r"(?m)^## Notes\s*$", markdown))
+    if not matches:
         return None
+    match = matches[-1]
     return markdown[: match.start()]
 
 

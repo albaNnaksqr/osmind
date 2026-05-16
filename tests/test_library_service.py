@@ -269,6 +269,33 @@ Keep this issue note.
     assert library.list_packs()[0]["path"] == str(original_path)
 
 
+def test_write_issue_pack_preserves_only_final_notes_section_when_body_mentions_notes(tmp_path):
+    notes_vault = tmp_path / "notes"
+    cache_path = tmp_path / "cache" / "osmind.db"
+    library = PackLibrary(notes_vault, cache_path)
+    issue = _issue(title="Original Issue")
+    issue.body = "Original body\n\n## Notes\n\nThis heading came from upstream."
+    path = library.write_issue_pack(issue)
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nManual user note.\n\n## Follow-up\n\nKeep this user section.\n",
+        encoding="utf-8",
+    )
+
+    retitled = _issue(title="Retitled Issue", updated_at="2026-05-16T01:02:03+00:00")
+    retitled.body = "New body without the old generated content."
+    library.write_issue_pack(retitled)
+
+    markdown = path.read_text(encoding="utf-8")
+
+    assert "# Issue #7: Retitled Issue" in markdown
+    assert "Original body" not in markdown
+    assert "This heading came from upstream." not in markdown
+    assert "New body without the old generated content." in markdown
+    assert "## Notes\n\nManual user note.\n\n## Follow-up\n\nKeep this user section." in markdown
+    assert markdown.count("## Missing Context") == 1
+
+
 def test_open_path_splits_command_args(monkeypatch, tmp_path):
     calls = []
     path = tmp_path / "pack.md"
