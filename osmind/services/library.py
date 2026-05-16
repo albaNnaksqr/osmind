@@ -9,7 +9,7 @@ from pathlib import Path
 import yaml
 
 from osmind.cache.store import CacheStore
-from osmind.github.models import GHPR
+from osmind.github.models import GHIssue, GHPR
 from osmind.packs.generator import PackGenerator
 from osmind.packs.renderer import render_pack
 
@@ -25,7 +25,22 @@ class PackLibrary:
 
     def write_pr_pack(self, pr: GHPR) -> Path:
         pack = self.generator.from_pr(pr)
-        path = self._existing_pr_pack_path(pr) or self._pr_pack_path(pr)
+        path = self._existing_pack_path(pr.repo, "pr", pr.number) or self._pr_pack_path(pr)
+        return self._write_pack(path, pr.repo, "pr", pr.number, pack)
+
+    def write_issue_pack(self, issue: GHIssue) -> Path:
+        pack = self.generator.from_issue(issue)
+        path = self._existing_pack_path(issue.repo, "issue", issue.number) or self._issue_pack_path(issue)
+        return self._write_pack(path, issue.repo, "issue", issue.number, pack)
+
+    def _write_pack(
+        self,
+        path: Path,
+        repo: str,
+        source_type: str,
+        number: int,
+        pack,
+    ) -> Path:
         if path.exists():
             existing_markdown = path.read_text(encoding="utf-8")
             _preserve_status_and_confidence(pack, existing_markdown)
@@ -35,9 +50,9 @@ class PackLibrary:
         path.parent.mkdir(parents=True, exist_ok=True)
         _atomic_write_text(path, markdown)
         self.cache.upsert_pack(
-            pr.repo,
-            "pr",
-            pr.number,
+            repo,
+            source_type,
+            number,
             path,
             pack.status,
             pack.confidence,
@@ -53,8 +68,13 @@ class PackLibrary:
         filename = f"pr-{pr.number}-{_slug(pr.title)}.md"
         return self.notes_vault / "osmind" / repo_dir / filename
 
-    def _existing_pr_pack_path(self, pr: GHPR) -> Path | None:
-        cached_pack = self.cache.get_pack(pr.repo, "pr", pr.number)
+    def _issue_pack_path(self, issue: GHIssue) -> Path:
+        repo_dir = issue.repo.replace("/", "_")
+        filename = f"issue-{issue.number}-{_slug(issue.title)}.md"
+        return self.notes_vault / "osmind" / repo_dir / filename
+
+    def _existing_pack_path(self, repo: str, source_type: str, number: int) -> Path | None:
+        cached_pack = self.cache.get_pack(repo, source_type, number)
         if cached_pack is None:
             return None
 

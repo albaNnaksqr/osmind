@@ -1,6 +1,4 @@
-import pytest
-
-from osmind.github.models import GHIssue, GHPR, PRFile
+from osmind.github.models import GHComment, GHIssue, GHPR, PRFile
 from osmind.packs.generator import PackGenerator
 
 
@@ -150,16 +148,54 @@ def test_from_pr_agent_prompt_mentions_pr_number_repo_and_title():
     assert "Refactor runner" in prompt
 
 
-def test_from_issue_placeholder_raises_not_implemented_error():
+def test_from_issue_includes_required_sections_and_issue_context():
     issue = GHIssue(
         number=42,
         title="Tokenizer leak",
         body="Long sequences leak memory.",
-        labels=[],
+        labels=["bug", "tokenizer"],
         url="https://github.com/o/r/issues/42",
         repo="o/r",
         state="open",
+        updated_at="2026-05-16T01:02:03+00:00",
+        comments=[
+            GHComment(
+                author="maintainer",
+                body="Likely related to the tokenizer cache.",
+                url="https://github.com/o/r/issues/42#issuecomment-1",
+                created_at="2026-05-16T02:03:04+00:00",
+            )
+        ],
     )
 
-    with pytest.raises(NotImplementedError):
-        PackGenerator().from_issue(issue)
+    pack = PackGenerator().from_issue(issue)
+    sections = {section.title: section.body for section in pack.sections}
+
+    assert pack.source.source_type == "issue"
+    assert pack.source.repo == "o/r"
+    assert pack.source.number == 42
+    assert pack.source.title == "Tokenizer leak"
+    assert pack.source.url == "https://github.com/o/r/issues/42"
+    assert pack.source.updated_at == "2026-05-16T01:02:03+00:00"
+    assert list(sections) == [
+        "Why This May Fit You",
+        "What Is Known",
+        "Missing Context",
+        "Investigation Path",
+        "Files Or Symbols To Search",
+        "Agent Exploration Prompt",
+        "Human Checkpoints",
+        "Learning Questions",
+        "Notes",
+    ]
+    assert "Tokenizer leak" in sections["Why This May Fit You"]
+    assert "bug, tokenizer" in sections["Why This May Fit You"]
+    assert "Long sequences leak memory." in sections["What Is Known"]
+    assert "maintainer" in sections["Missing Context"]
+    assert "tokenizer cache" in sections["Missing Context"]
+    assert "reproduce" in sections["Investigation Path"].lower()
+    assert "Human Checkpoints" in sections
+    assert "issue #42" in sections["Agent Exploration Prompt"].lower()
+    assert "o/r" in sections["Agent Exploration Prompt"]
+    assert "Tokenizer leak" in sections["Agent Exploration Prompt"]
+    assert "Do not implement" in sections["Agent Exploration Prompt"]

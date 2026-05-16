@@ -55,7 +55,26 @@ class PackGenerator:
 
     @staticmethod
     def from_issue(issue: GHIssue) -> LearningPack:
-        raise NotImplementedError("Issue learning packs are planned for Task 6.")
+        source = SourceRef(
+            source_type="issue",
+            repo=issue.repo,
+            number=issue.number,
+            title=issue.title,
+            url=issue.url,
+            updated_at=issue.updated_at,
+        )
+        sections = [
+            PackSection("Why This May Fit You", _why_issue_may_fit(issue)),
+            PackSection("What Is Known", _issue_known_context(issue)),
+            PackSection("Missing Context", _issue_missing_context(issue)),
+            PackSection("Investigation Path", _issue_investigation_path()),
+            PackSection("Files Or Symbols To Search", _issue_search_targets(issue)),
+            PackSection("Agent Exploration Prompt", _issue_agent_prompt(issue)),
+            PackSection("Human Checkpoints", _issue_human_checkpoints()),
+            PackSection("Learning Questions", _issue_learning_questions()),
+            PackSection("Notes", ""),
+        ]
+        return LearningPack(source=source, modules=[], sections=sections)
 
 
 def _modules_from_files(files: list[PRFile]) -> list[str]:
@@ -182,3 +201,81 @@ def _review_later(files: list[PRFile]) -> str:
     if not files:
         return "- Revisit this pack after fetching the PR file list."
     return "\n".join(f"- {_file_summary(file)}" for file in files[:5])
+
+
+def _why_issue_may_fit(issue: GHIssue) -> str:
+    labels = ", ".join(issue.labels) if issue.labels else "none"
+    return (
+        f"Issue #{issue.number}: {issue.title}\n\n"
+        f"Labels: {labels}\n\n"
+        "Use this issue to judge whether the problem is understandable, scoped, "
+        "and worth deeper exploration before attempting a contribution."
+    )
+
+
+def _issue_known_context(issue: GHIssue) -> str:
+    return (issue.body or "").strip() or "The issue body is empty. Use repository search and comments to recover context."
+
+
+def _issue_missing_context(issue: GHIssue) -> str:
+    if not issue.comments:
+        return "- No cached issue comments are available."
+    lines = []
+    for comment in issue.comments[:5]:
+        body = " ".join((comment.body or "").split())
+        if len(body) > 300:
+            body = f"{body[:300].rstrip()}..."
+        author = comment.author or "unknown"
+        lines.append(f"- {author}: {body}")
+    return "\n".join(lines)
+
+
+def _issue_investigation_path() -> str:
+    return "\n".join(
+        [
+            "1. Reproduce or restate the bug or request in your own words.",
+            "2. Search the repository for names from the title and issue body.",
+            "3. Identify the smallest module likely involved.",
+            "4. Find existing tests around that module.",
+            "5. Decide whether the next step is reading, reproduction, or implementation.",
+        ]
+    )
+
+
+def _issue_search_targets(issue: GHIssue) -> str:
+    title_words = [word.strip(".,:;()[]{}").lower() for word in issue.title.split()]
+    title_words = [word for word in title_words if len(word) > 3]
+    targets = title_words[:6]
+    lines = [f"- `{target}`" for target in targets]
+    if issue.labels:
+        lines.append(f"- Labels: {', '.join(issue.labels)}")
+    return "\n".join(lines) if lines else "- Search exact phrases from the issue title and body."
+
+
+def _issue_agent_prompt(issue: GHIssue) -> str:
+    return (
+        f"Help me investigate issue #{issue.number} in `{issue.repo}` titled \"{issue.title}\". "
+        "First summarize the known facts, then search for likely files or symbols, then propose "
+        "a minimal reproduction or validation path. Do not implement until the investigation path is clear."
+    )
+
+
+def _issue_human_checkpoints() -> str:
+    return "\n".join(
+        [
+            "- [ ] I can explain the issue without copying the issue text.",
+            "- [ ] I know which module is likely involved.",
+            "- [ ] I know what evidence would prove a fix works.",
+            "- [ ] I know whether this is suitable for agent assistance.",
+        ]
+    )
+
+
+def _issue_learning_questions() -> str:
+    return "\n".join(
+        [
+            "1. What existing behavior does this issue rely on?",
+            "2. What project convention might constrain the fix?",
+            "3. What would make this issue too risky for a first contribution?",
+        ]
+    )

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from osmind.github.models import GHPR, PRFile
+from osmind.github.models import GHIssue, GHPR, PRFile
 from osmind.packs.opener import open_path
 from osmind.services.library import PackLibrary
 
@@ -24,6 +24,19 @@ def _pr(*, title: str = "Add Learning Pack Writer!", updated_at: str = "2026-05-
                 deletions=0,
             )
         ],
+    )
+
+
+def _issue(*, title: str = "Tokenizer memory leak", updated_at: str = "2026-05-15T01:02:03+00:00") -> GHIssue:
+    return GHIssue(
+        number=7,
+        title=title,
+        body="Memory grows on long sequences.",
+        labels=["bug"],
+        url="https://github.com/openai/osmind/issues/7",
+        repo="openai/osmind",
+        state="open",
+        updated_at=updated_at,
     )
 
 
@@ -182,6 +195,78 @@ def test_write_pr_pack_replace_failure_preserves_existing_file_and_cache(tmp_pat
     assert path.read_text(encoding="utf-8") == original_markdown
     assert library.list_packs() == original_cache
     assert not list(path.parent.glob(".*.tmp"))
+
+
+def test_write_issue_pack_creates_markdown_and_cache_record(tmp_path):
+    notes_vault = tmp_path / "notes"
+    cache_path = tmp_path / "cache" / "osmind.db"
+    library = PackLibrary(notes_vault, cache_path)
+
+    path = library.write_issue_pack(_issue())
+
+    assert path == notes_vault / "osmind" / "openai_osmind" / "issue-7-tokenizer-memory-leak.md"
+    assert path.exists()
+    markdown = path.read_text(encoding="utf-8")
+    assert "# Issue #7: Tokenizer memory leak" in markdown
+    assert "source_type: issue" in markdown
+    assert "Memory grows on long sequences." in markdown
+
+    packs = library.list_packs()
+    assert packs[0]["repo"] == "openai/osmind"
+    assert packs[0]["source_type"] == "issue"
+    assert packs[0]["number"] == 7
+    assert packs[0]["path"] == str(path)
+    assert packs[0]["status"] == "unread"
+    assert packs[0]["confidence"] == "unknown"
+
+
+def test_write_issue_pack_reuses_cached_path_and_preserves_user_content_on_retitle(tmp_path):
+    notes_vault = tmp_path / "notes"
+    cache_path = tmp_path / "cache" / "osmind.db"
+    library = PackLibrary(notes_vault, cache_path)
+    original_path = library.write_issue_pack(_issue(title="Original Issue"))
+    original_path.write_text(
+        """---
+type: osmind-learning-pack
+source_type: issue
+repo: openai/osmind
+number: 7
+title: Original Issue
+url: https://github.com/openai/osmind/issues/7
+status: reviewed
+confidence: high
+generated_at: '2026-05-15'
+source_updated_at: '2026-05-15T01:02:03+00:00'
+modules: []
+tags:
+- osmind
+---
+
+# Issue #7: Original Issue
+
+## Why This May Fit You
+
+Old generated content.
+
+## Notes
+
+Keep this issue note.
+""",
+        encoding="utf-8",
+    )
+
+    returned_path = library.write_issue_pack(_issue(title="Retitled Issue", updated_at="2026-05-16T01:02:03+00:00"))
+
+    assert returned_path == original_path
+    assert not (notes_vault / "osmind" / "openai_osmind" / "issue-7-retitled-issue.md").exists()
+    markdown = original_path.read_text(encoding="utf-8")
+    assert "# Issue #7: Retitled Issue" in markdown
+    assert "title: Retitled Issue" in markdown
+    assert "status: reviewed" in markdown
+    assert "confidence: high" in markdown
+    assert "Old generated content." not in markdown
+    assert "## Notes\n\nKeep this issue note." in markdown
+    assert library.list_packs()[0]["path"] == str(original_path)
 
 
 def test_open_path_splits_command_args(monkeypatch, tmp_path):
