@@ -94,6 +94,52 @@ async def test_discover_fetch_exception_is_logged(temp_config, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_discover_scoring_continues_after_issue_error(temp_config, monkeypatch):
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    from osmind.tui.widgets.issue_list import IssueTable
+    import osmind.engine.llm
+    import osmind.engine.ranker
+
+    issues = [
+        GHIssue(1, "Broken score", "Body", [], "u", "o/r", "open"),
+        GHIssue(2, "Working score", "Body", [], "u", "o/r", "open"),
+    ]
+
+    class DummyLLMClient:
+        def __init__(self, cfg):
+            pass
+
+    class PartlyFailingRanker:
+        def __init__(self, llm, interests, skills):
+            pass
+
+        def score_one(self, issue):
+            if issue.number == 1:
+                raise RuntimeError("no connected db")
+            issue.score = 0.8
+            issue.reason = "ok"
+            return issue
+
+    monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
+    monkeypatch.setattr(osmind.engine.ranker, "Ranker", PartlyFailingRanker)
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        table = app.query_one(IssueTable)
+        table.populate(issues)
+        discover._issues_by_number = {str(issue.number): issue for issue in issues}
+        await discover._score_progressively(issues, "o/r", "")
+
+    assert discover._issues_by_number["1"].score == 0.0
+    assert discover._issues_by_number["2"].score == 0.8
+    text = (temp_config.notes_vault / "osmind" / ".cache" / "osmind.log").read_text(encoding="utf-8")
+    assert "Failed to score issue o/r#1" in text
+    assert "RuntimeError: no connected db" in text
+
+
+@pytest.mark.asyncio
 async def test_packs_open_uses_visible_row_key_after_sort(temp_config, monkeypatch):
     from osmind.github.models import GHPR
     from osmind.services.library import PackLibrary

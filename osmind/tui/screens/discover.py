@@ -104,13 +104,29 @@ class DiscoverScreen(Vertical):
             llm = LLMClient(llm_cfg)
             ranker = Ranker(llm, interests, skills)
 
+            failures = 0
             for issue in issues:
-                scored = await asyncio.to_thread(ranker.score_one, issue)
+                try:
+                    scored = await asyncio.to_thread(ranker.score_one, issue)
+                except Exception:
+                    failures += 1
+                    log_exception(
+                        self.app.config.notes_vault,
+                        f"Failed to score issue {repo}#{issue.number}",
+                    )
+                    issue.score = 0.0
+                    issue.reason = "评分失败，详情见 osmind.log"
+                    scored = issue
                 self._issues_by_number[str(scored.number)] = scored
                 self.query_one(IssueTable).update_score(str(scored.number), scored.score)
 
             hint = self.query_one("#hint", Label)
             hint.update("  ↑↓ navigate  g: Generate Pack  o: Open Pack  c: Claude  x: Codex")
+            if failures:
+                self.notify(
+                    f"{failures} 个 issue 评分失败，详情见 osmind.log",
+                    severity="warning",
+                )
         except Exception as e:
             log_path = log_exception(self.app.config.notes_vault, f"Failed to score issues for {repo}")
             self.notify(f"评分出错: {e} (log: {log_path})", severity="warning")
