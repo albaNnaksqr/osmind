@@ -5,6 +5,7 @@ from pathlib import Path
 from textual.app import ComposeResult
 from textual.widgets import Label, LoadingIndicator, Select, Static
 from textual.containers import Vertical, Horizontal
+from osmind.logs import log_exception
 from osmind.packs.opener import open_path
 from osmind.tui.widgets.issue_list import IssueTable
 
@@ -86,8 +87,9 @@ class DiscoverScreen(Vertical):
                 exclusive=False,
             )
         except Exception as e:
+            log_path = log_exception(self.app.config.notes_vault, f"Failed to fetch issues for {repo}")
             hint.update("  Error — press f to retry")
-            self.notify(str(e), severity="error")
+            self.notify(f"{e} (log: {log_path})", severity="error")
             loader.display = False
 
     async def _score_progressively(self, issues, repo: str, token: str) -> None:
@@ -110,7 +112,8 @@ class DiscoverScreen(Vertical):
             hint = self.query_one("#hint", Label)
             hint.update("  ↑↓ navigate  g: Generate Pack  o: Open Pack  c: Claude  x: Codex")
         except Exception as e:
-            self.notify(f"评分出错: {e}", severity="warning")
+            log_path = log_exception(self.app.config.notes_vault, f"Failed to score issues for {repo}")
+            self.notify(f"评分出错: {e} (log: {log_path})", severity="warning")
 
     def _get_selected_issue(self):
         table = self.query_one(IssueTable)
@@ -150,9 +153,16 @@ class DiscoverScreen(Vertical):
         if not issue:
             self.notify("先选中一个 issue", severity="warning")
             return
-        path = await asyncio.to_thread(lambda: self._library().write_issue_pack(issue))
-        self._pack_paths_by_key[self._pack_key(issue)] = str(path)
-        self.notify(f"Learning Pack saved: {path}", timeout=5)
+        try:
+            path = await asyncio.to_thread(lambda: self._library().write_issue_pack(issue))
+            self._pack_paths_by_key[self._pack_key(issue)] = str(path)
+            self.notify(f"Learning Pack saved: {path}", timeout=5)
+        except Exception as e:
+            log_path = log_exception(
+                self.app.config.notes_vault,
+                f"Failed to generate Learning Pack for {issue.repo}#{issue.number}",
+            )
+            self.notify(f"{e} (log: {log_path})", severity="error")
 
     def action_open_pack(self) -> None:
         issue = self._get_selected_issue()
@@ -163,7 +173,14 @@ class DiscoverScreen(Vertical):
         if not path:
             self.notify("No pack generated for selected issue", severity="warning")
             return
-        open_path(path)
+        try:
+            open_path(path)
+        except Exception as e:
+            log_path = log_exception(
+                self.app.config.notes_vault,
+                f"Failed to open Learning Pack for {issue.repo}#{issue.number}",
+            )
+            self.notify(f"{e} (log: {log_path})", severity="error")
 
     async def action_launch_claude(self) -> None:
         issue = self._get_selected_issue()

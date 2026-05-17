@@ -69,6 +69,31 @@ def test_discover_has_no_learn_binding():
 
 
 @pytest.mark.asyncio
+async def test_discover_fetch_exception_is_logged(temp_config, monkeypatch):
+    from osmind.tui.screens.discover import DiscoverScreen
+    import osmind.github.client
+
+    class FailingGitHubClient:
+        def __init__(self, token=""):
+            pass
+
+        def get_issues(self, repo, limit=30):
+            raise RuntimeError("no connected db")
+
+    monkeypatch.setattr(osmind.github.client, "GitHubClient", FailingGitHubClient)
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        await discover.action_fetch()
+
+    log_path = temp_config.notes_vault / "osmind" / ".cache" / "osmind.log"
+    text = log_path.read_text(encoding="utf-8")
+    assert "Failed to fetch issues" in text
+    assert "RuntimeError: no connected db" in text
+
+
+@pytest.mark.asyncio
 async def test_packs_open_uses_visible_row_key_after_sort(temp_config, monkeypatch):
     from osmind.github.models import GHPR
     from osmind.services.library import PackLibrary

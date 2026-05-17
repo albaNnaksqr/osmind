@@ -115,6 +115,14 @@ Run:
 osmind
 ```
 
+## Logs
+
+Runtime errors shown in the TUI are also written with traceback details to:
+
+```text
+<notes_vault>/osmind/.cache/osmind.log
+```
+
 ## LLM backend
 
 osmind uses any **OpenAI-compatible** API for issue ranking and Socratic questions. Point `llm.base_url` at whatever you're running:
