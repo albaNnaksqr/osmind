@@ -72,6 +72,40 @@ def test_cache_round_trips_issue_with_score_and_comments(tmp_path: Path):
     assert cached[0].comments[0].author == "maintainer"
 
 
+def test_cache_round_trips_issue_recommendation_dimensions(tmp_path: Path):
+    store = CacheStore(tmp_path / "osmind.db")
+    issue = GHIssue(
+        number=7,
+        title="DeepSeek V4Pro reproduction fails",
+        body="Requires full model reproduction.",
+        labels=["bug"],
+        url="https://github.com/o/r/issues/7",
+        repo="o/r",
+        state="open",
+        updated_at="u7",
+    )
+
+    store.upsert_issue(issue)
+    store.update_issue_score(
+        "o/r",
+        "issue",
+        7,
+        0.2,
+        "主题匹配，但当前 GPU 资源不足以复现",
+        priority="low",
+        fit="high",
+        resource_fit="blocked",
+        actionability="low",
+    )
+
+    cached = store.list_issues("o/r")
+
+    assert cached[0].priority == "low"
+    assert cached[0].fit == "high"
+    assert cached[0].resource_fit == "blocked"
+    assert cached[0].actionability == "low"
+
+
 def test_cache_rolls_back_failed_item_write_before_pack_write(tmp_path: Path):
     store = CacheStore(tmp_path / "osmind.db")
 
@@ -125,6 +159,26 @@ def test_cache_records_pack_decision(tmp_path: Path):
 
     assert pack is not None
     assert pack["decision"] == "continue"
+
+
+def test_cache_updates_pack_decision(tmp_path: Path):
+    store = CacheStore(tmp_path / "osmind.db")
+    store.upsert_pack(
+        repo="o/r",
+        source_type="issue",
+        number=42,
+        path=tmp_path / "pack.md",
+        status="unread",
+        confidence="unknown",
+        source_updated_at="u1",
+    )
+
+    updated = store.update_pack_decision("o/r", "issue", 42, "defer")
+
+    pack = store.get_pack("o/r", "issue", 42)
+    assert updated is True
+    assert pack is not None
+    assert pack["decision"] == "defer"
 
 
 def test_cache_lists_same_second_packs_newest_first(tmp_path: Path):

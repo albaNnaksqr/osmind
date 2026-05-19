@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 import os
 import re
 import tempfile
@@ -11,6 +12,7 @@ import yaml
 from osmind.cache.store import CacheStore
 from osmind.github.models import GHIssue, GHPR
 from osmind.packs.generator import PackGenerator
+from osmind.packs.models import VALID_PACK_DECISIONS
 from osmind.packs.renderer import render_pack
 
 
@@ -64,6 +66,25 @@ class PackLibrary:
     def list_packs(self) -> list[dict]:
         return self.cache.list_packs()
 
+    def set_pack_decision(self, repo: str, source_type: str, number: int, decision: str) -> Path:
+        if decision not in VALID_PACK_DECISIONS:
+            raise ValueError(f"Unsupported pack decision: {decision}")
+
+        cached_pack = self.cache.get_pack(repo, source_type, number)
+        if cached_pack is None:
+            raise FileNotFoundError(f"No Contribution Packet cached for {repo} {source_type} #{number}")
+
+        path = Path(cached_pack["path"])
+        if not path.exists():
+            raise FileNotFoundError(f"Contribution Packet file does not exist: {path}")
+
+        markdown = path.read_text(encoding="utf-8")
+        updated_markdown = _mark_decision(markdown, decision)
+        _atomic_write_text(path, updated_markdown)
+        if not self.cache.update_pack_decision(repo, source_type, number, decision):
+            raise FileNotFoundError(f"No Contribution Packet cached for {repo} {source_type} #{number}")
+        return path
+
     def _pr_pack_path(self, pr: GHPR) -> Path:
         repo_dir = pr.repo.replace("/", "_")
         filename = f"pr-{pr.number}-{_slug(pr.title)}.md"
@@ -104,6 +125,50 @@ def _preserve_user_frontmatter(pack, existing_markdown: str) -> None:
         pack.decision = str(decision)
     if confidence:
         pack.confidence = str(confidence)
+
+
+def _mark_decision(markdown: str, decision: str) -> str:
+    return _append_decision_log(_replace_frontmatter_field(markdown, "decision", decision), decision)
+
+
+def _replace_frontmatter_field(markdown: str, field: str, value: str) -> str:
+    lines = markdown.splitlines(keepends=True)
+    if not lines or lines[0].strip() != "---":
+        raise ValueError("Pack is missing YAML frontmatter")
+
+    for index, line in enumerate(lines[1:], 1):
+        if line.strip() == "---":
+            raw_frontmatter = "".join(lines[1:index])
+            loaded = yaml.safe_load(raw_frontmatter) or {}
+            if not isinstance(loaded, dict):
+                raise ValueError("Pack frontmatter must be a mapping")
+            loaded[field] = value
+            frontmatter = yaml.dump(loaded, allow_unicode=True, sort_keys=False).strip()
+            body = "".join(lines[index + 1 :])
+            return f"---\n{frontmatter}\n---\n{body}"
+    raise ValueError("Pack is missing YAML frontmatter")
+
+
+def _append_decision_log(markdown: str, decision: str) -> str:
+    entry = f"- {date.today()}: decision={decision}"
+    matches = list(re.finditer(r"(?m)^## Decision Log\s*$", markdown))
+    if matches:
+        match = matches[-1]
+        next_heading = re.search(r"(?m)^##\s+", markdown[match.end() :])
+        section_end = match.end() + next_heading.start() if next_heading else len(markdown)
+        prefix = markdown[:section_end].rstrip()
+        suffix = markdown[section_end:].lstrip("\n")
+        if suffix:
+            return f"{prefix}\n{entry}\n\n{suffix}"
+        return f"{prefix}\n{entry}\n"
+
+    section = f"## Decision Log\n\n{entry}\n"
+    notes_match = re.search(r"(?m)^## Notes\s*$", markdown)
+    if notes_match:
+        prefix = markdown[: notes_match.start()].rstrip()
+        suffix = markdown[notes_match.start() :].lstrip("\n")
+        return f"{prefix}\n\n{section}\n{suffix}"
+    return f"{markdown.rstrip()}\n\n{section}"
 
 
 def _read_frontmatter(markdown: str) -> dict:

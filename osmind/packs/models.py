@@ -7,6 +7,8 @@ PackStatus = str
 PackDecision = str
 PackConfidence = str
 
+VALID_PACK_DECISIONS = {"undecided", "continue", "defer", "discard"}
+
 
 @dataclass
 class SourceRef:

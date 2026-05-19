@@ -23,6 +23,41 @@ def test_rank_single_issue(ranker):
     assert scored[0].score == pytest.approx(0.85)
 
 
+def test_ranker_scores_resource_fit_and_includes_resources_in_prompt():
+    mock_llm = MagicMock()
+    mock_llm.chat.return_value = (
+        '{"score": 0.2, "priority": "low", "fit": "high", '
+        '"resource_fit": "blocked", "actionability": "low", '
+        '"reason": "主题匹配，但当前 GPU 资源不足以复现"}'
+    )
+    ranker = Ranker(
+        llm=mock_llm,
+        interests=["large model inference"],
+        skills=["Python"],
+        resources={"gpus": "4x RTX 4090", "time": "part-time"},
+    )
+    issue = GHIssue(
+        number=7,
+        title="DeepSeek V4Pro reproduction fails",
+        body="Requires reproducing with the full model.",
+        labels=["bug"],
+        url="https://github.com/x/y/issues/7",
+        repo="x/y",
+        state="open",
+    )
+
+    scored = ranker.score_one(issue)
+
+    prompt = mock_llm.chat.call_args.args[1]
+    assert "User resources:" in prompt
+    assert "gpus: 4x RTX 4090" in prompt
+    assert scored.priority == "low"
+    assert scored.fit == "high"
+    assert scored.resource_fit == "blocked"
+    assert scored.actionability == "low"
+    assert scored.reason == "主题匹配，但当前 GPU 资源不足以复现"
+
+
 def test_rank_sorts_by_score(ranker):
     def side_effect(system, user, **kwargs):
         if "Qwen3" in user:

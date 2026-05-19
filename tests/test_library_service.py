@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 
 from osmind.github.models import GHIssue, GHPR, PRFile
@@ -303,6 +305,37 @@ def test_write_issue_pack_preserves_only_final_notes_section_when_body_mentions_
     assert "New body without the old generated content." in markdown
     assert "## Notes\n\nManual user note.\n\n## Follow-up\n\nKeep this user section." in markdown
     assert markdown.count("## Missing Context") == 1
+
+
+def test_set_pack_decision_updates_markdown_frontmatter_log_and_cache(tmp_path):
+    notes_vault = tmp_path / "notes"
+    cache_path = tmp_path / "cache" / "osmind.db"
+    library = PackLibrary(notes_vault, cache_path)
+    path = library.write_issue_pack(_issue())
+
+    returned_path = library.set_pack_decision("openai/osmind", "issue", 7, "continue")
+
+    markdown = path.read_text(encoding="utf-8")
+    packs = library.list_packs()
+    assert returned_path == path
+    assert "decision: continue" in markdown
+    assert "## Decision Log" in markdown
+    assert f"- {date.today()}: decision=continue" in markdown
+    assert packs[0]["decision"] == "continue"
+
+
+def test_set_pack_decision_rejects_unknown_decision_without_changing_file(tmp_path):
+    notes_vault = tmp_path / "notes"
+    cache_path = tmp_path / "cache" / "osmind.db"
+    library = PackLibrary(notes_vault, cache_path)
+    path = library.write_issue_pack(_issue())
+    original_markdown = path.read_text(encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Unsupported pack decision"):
+        library.set_pack_decision("openai/osmind", "issue", 7, "maybe")
+
+    assert path.read_text(encoding="utf-8") == original_markdown
+    assert library.list_packs()[0]["decision"] == "undecided"
 
 
 def test_open_path_splits_command_args(monkeypatch, tmp_path):

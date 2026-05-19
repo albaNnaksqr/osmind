@@ -71,6 +71,10 @@ class CacheStore:
             "comments_json": "TEXT NOT NULL DEFAULT '[]'",
             "score": "REAL NOT NULL DEFAULT 0",
             "reason": "TEXT NOT NULL DEFAULT ''",
+            "priority": "TEXT NOT NULL DEFAULT 'unknown'",
+            "fit": "TEXT NOT NULL DEFAULT 'unknown'",
+            "resource_fit": "TEXT NOT NULL DEFAULT 'unknown'",
+            "actionability": "TEXT NOT NULL DEFAULT 'unknown'",
         }
         for column, definition in migrations.items():
             if column not in columns:
@@ -293,15 +297,32 @@ class CacheStore:
             self._conn.rollback()
             raise
 
-    def update_issue_score(self, repo: str, source_type: str, number: int, score: float, reason: str) -> None:
+    def update_issue_score(
+        self,
+        repo: str,
+        source_type: str,
+        number: int,
+        score: float,
+        reason: str,
+        *,
+        priority: str = "unknown",
+        fit: str = "unknown",
+        resource_fit: str = "unknown",
+        actionability: str = "unknown",
+    ) -> None:
         try:
             self._conn.execute(
                 """
                 UPDATE github_items
-                SET score = ?, reason = ?
+                SET score = ?,
+                    reason = ?,
+                    priority = ?,
+                    fit = ?,
+                    resource_fit = ?,
+                    actionability = ?
                 WHERE repo = ? AND source_type = ? AND number = ?
                 """,
-                (score, reason, repo, source_type, number),
+                (score, reason, priority, fit, resource_fit, actionability, repo, source_type, number),
             )
             self._conn.commit()
         except Exception:
@@ -311,7 +332,9 @@ class CacheStore:
     def list_issues(self, repo: str) -> list[GHIssue]:
         rows = self._conn.execute(
             """
-            SELECT repo, number, title, body, labels_json, comments_json, state, url, updated_at, score, reason
+            SELECT
+                repo, number, title, body, labels_json, comments_json, state, url, updated_at,
+                score, reason, priority, fit, resource_fit, actionability
             FROM github_items
             WHERE repo = ? AND source_type = 'issue'
             ORDER BY fetched_at DESC, number DESC
@@ -352,6 +375,25 @@ class CacheStore:
                 (repo, source_type, number, str(path), status, decision, confidence, source_updated_at, next_version),
             )
             self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
+
+    def update_pack_decision(self, repo: str, source_type: str, number: int, decision: str) -> bool:
+        try:
+            self._conn.execute("BEGIN IMMEDIATE")
+            next_version = self._next_pack_version()
+            cursor = self._conn.execute(
+                """
+                UPDATE packs
+                SET decision = ?,
+                    version = ?
+                WHERE repo = ? AND source_type = ? AND number = ?
+                """,
+                (decision, next_version, repo, source_type, number),
+            )
+            self._conn.commit()
+            return cursor.rowcount > 0
         except Exception:
             self._conn.rollback()
             raise
@@ -415,6 +457,10 @@ def _issue_from_row(row: sqlite3.Row) -> GHIssue:
         state=str(row["state"]),
         score=float(row["score"]),
         reason=str(row["reason"]),
+        priority=str(row["priority"]),
+        fit=str(row["fit"]),
+        resource_fit=str(row["resource_fit"]),
+        actionability=str(row["actionability"]),
         updated_at=str(row["updated_at"]),
         comments=comments,
     )

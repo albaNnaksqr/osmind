@@ -11,7 +11,7 @@ def mock_config():
     return Config(
         interests=["SGLang"],
         skills=["Python"],
-        resources={},
+        resources={"gpus": "4x RTX 4090"},
         watching=[{"repo": "sgl-project/sglang"}],
         notes_vault=Path("/tmp/osmind_test_vault"),
         llm=LLMConfig(base_url="http://localhost:1234/v1", model="test", api_key="test"),
@@ -24,7 +24,7 @@ def temp_config(tmp_path):
     return Config(
         interests=["SGLang"],
         skills=["Python"],
-        resources={},
+        resources={"gpus": "4x RTX 4090"},
         watching=[{"repo": "sgl-project/sglang"}],
         notes_vault=tmp_path / "vault",
         llm=LLMConfig(base_url="http://localhost:1234/v1", model="test", api_key="test"),
@@ -232,7 +232,7 @@ async def test_discover_fetch_uses_cached_issues_without_github_or_rescoring(tem
             raise AssertionError("GitHub should not be called for cached issues")
 
     class FailingRanker:
-        def __init__(self, llm, interests, skills):
+        def __init__(self, llm, interests, skills, resources=None):
             pass
 
         def score_one(self, issue):
@@ -286,8 +286,43 @@ async def test_discover_fetch_sorts_cached_issues_by_score_and_shows_reason(temp
         table = app.query_one(IssueTable)
         first_row = table.get_row_at(0)
 
-        assert first_row[1] == "2"
-        assert first_row[4] == "high reason"
+        assert first_row[2] == "2"
+        assert "high reason" in first_row[1]
+
+
+@pytest.mark.asyncio
+async def test_issue_table_shows_decision_oriented_recommendation_columns(temp_config):
+    from osmind.github.models import GHIssue
+    from osmind.tui.widgets.issue_list import IssueTable
+
+    issue = GHIssue(
+        42,
+        "DeepSeek V4Pro reproduction fails",
+        "Requires full model reproduction.",
+        ["bug"],
+        "u",
+        "o/r",
+        "open",
+        score=0.2,
+        reason="主题匹配，但当前 GPU 资源不足以复现",
+        priority="low",
+        fit="high",
+        resource_fit="blocked",
+        actionability="low",
+    )
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        table = app.query_one(IssueTable)
+        table.populate([issue])
+
+        labels = [str(column.label) for column in table.columns.values()]
+        row = table.get_row_at(0)
+
+    assert labels == ["Action", "Why", "#", "Title", "Labels"]
+    assert row[0] == "Defer"
+    assert row[1].startswith("resource blocked:")
+    assert "当前 GPU 资源不足" in row[1]
 
 
 @pytest.mark.asyncio
@@ -308,7 +343,7 @@ async def test_discover_scoring_continues_after_issue_error(temp_config, monkeyp
             pass
 
     class PartlyFailingRanker:
-        def __init__(self, llm, interests, skills):
+        def __init__(self, llm, interests, skills, resources=None):
             pass
 
         def score_one(self, issue):
@@ -354,7 +389,7 @@ async def test_discover_scoring_reorders_rows_and_updates_reason(temp_config, mo
             pass
 
     class OrderedRanker:
-        def __init__(self, llm, interests, skills):
+        def __init__(self, llm, interests, skills, resources=None):
             pass
 
         def score_one(self, issue):
@@ -375,12 +410,12 @@ async def test_discover_scoring_reorders_rows_and_updates_reason(temp_config, mo
         await discover._score_progressively(issues, "o/r", "")
 
         first_row = table.get_row_at(0)
-        assert first_row[1] == "2"
-        assert first_row[4] == "high reason"
+        assert first_row[2] == "2"
+        assert "high reason" in first_row[1]
 
 
 @pytest.mark.asyncio
-async def test_discover_view_issue_shows_original_text_and_summary(temp_config, monkeypatch):
+async def test_discover_view_issue_separates_analysis_from_source(temp_config, monkeypatch):
     from osmind.github.models import GHComment, GHIssue
     from osmind.tui.screens.discover import DiscoverScreen
     from osmind.tui.widgets.issue_list import IssueTable
@@ -426,16 +461,68 @@ async def test_discover_view_issue_shows_original_text_and_summary(temp_config, 
 
         await discover.action_view_issue()
 
-        detail = app.query_one("#issue-detail-panel", Static).content
+        analysis = app.query_one("#issue-analysis-panel", Static).content
+        source = app.query_one("#issue-source-panel", Static).content
 
-    assert "Issue #42: Tokenizer leak" in str(detail)
-    assert "The tokenizer cache keeps growing." in str(detail)
-    assert long_tail in str(detail)
-    assert "maintainer: Please include a regression test." in str(detail)
-    assert "这是 tokenizer cache 泄漏问题" in str(detail)
-    assert "继续/放弃判断" in str(detail)
-    assert "Continue" in str(detail)
-    assert "Stop" in str(detail)
+    assert "推荐动作" in str(analysis)
+    assert "继续/放弃判断" in str(analysis)
+    assert "Continue" in str(analysis)
+    assert "Stop" in str(analysis)
+    assert long_tail not in str(analysis)
+    assert "Issue #42: Tokenizer leak" in str(source)
+    assert "Summary" in str(source)
+    assert "这是 tokenizer cache 泄漏问题" in str(source)
+    assert "Original Issue" in str(source)
+    assert "The tokenizer cache keeps growing." in str(source)
+    assert long_tail in str(source)
+    assert "Comments" in str(source)
+    assert "maintainer: Please include a regression test." in str(source)
+
+
+@pytest.mark.asyncio
+async def test_discover_detail_tab_toggles_analysis_and_source_focus(temp_config, monkeypatch):
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    from osmind.tui.widgets.issue_list import IssueTable
+    from textual.widgets import Static
+    import osmind.engine.issue_explainer
+    import osmind.engine.llm
+
+    issue = GHIssue(42, "Tokenizer leak", "Body", [], "u", "o/r", "open")
+
+    class DummyLLMClient:
+        def __init__(self, cfg):
+            pass
+
+    class DummyIssueExplainer:
+        def __init__(self, llm):
+            pass
+
+        def summarize(self, issue):
+            return "摘要"
+
+    monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
+    monkeypatch.setattr(osmind.engine.issue_explainer, "IssueExplainer", DummyIssueExplainer)
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        table = app.query_one(IssueTable)
+        table.populate([issue])
+        table.cursor_coordinate = (0, 0)
+        discover._issues_by_number = {str(issue.number): issue}
+
+        await discover.action_view_issue()
+        analysis = app.query_one("#issue-analysis-panel", Static)
+        source = app.query_one("#issue-source-panel", Static)
+
+        assert app.focused is source
+
+        await pilot.press("tab")
+        assert app.focused is analysis
+
+        await pilot.press("tab")
+        assert app.focused is source
 
 
 @pytest.mark.asyncio
@@ -480,6 +567,39 @@ async def test_discover_issue_detail_is_a_separate_view_and_escape_returns_to_li
         assert app.query_one("#issue-list-view").display is True
         assert app.query_one("#issue-detail-view").display is False
         assert app.focused is table
+
+
+def test_issue_analysis_shows_recommendation_dimensions():
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import _format_issue_analysis
+
+    issue = GHIssue(
+        42,
+        "DeepSeek V4Pro reproduction fails",
+        "Requires full model reproduction.",
+        ["bug"],
+        "https://github.com/o/r/issues/42",
+        "o/r",
+        "open",
+        score=0.2,
+        reason="主题匹配，但当前 GPU 资源不足以复现",
+        priority="low",
+        fit="high",
+        resource_fit="blocked",
+        actionability="low",
+    )
+
+    detail = _format_issue_analysis(issue, resources={"gpus": "4x RTX 4090"})
+
+    assert "推荐动作" in detail
+    assert "Action: Defer" in detail
+    assert "Why: resource blocked" in detail
+    assert "Next: Defer until the required environment is available." in detail
+    assert "Priority: Low" in detail
+    assert "Fit: Hi" in detail
+    assert "Resource Fit: Blocked" in detail
+    assert "Actionability: Low" in detail
+    assert "用户资源: gpus: 4x RTX 4090" in detail
 
 
 @pytest.mark.asyncio
@@ -686,6 +806,89 @@ Existing note.
     assert "**Q: What changed?**\n\nThe runner flow changed." in text
 
 
+def test_review_delete_last_answer_removes_only_latest_review_entry(tmp_path):
+    from osmind.tui.screens.review import _delete_last_answer_from_pack
+
+    path = tmp_path / "pack.md"
+    path.write_text(
+        """---
+type: osmind-contribution-packet
+---
+
+# Issue #7: Tokenizer leak
+
+## Notes
+
+Existing note.
+
+**Q: First question?**
+
+First answer.
+
+**Q: Second question?**
+
+Second answer.
+""",
+        encoding="utf-8",
+    )
+
+    deleted = _delete_last_answer_from_pack(path)
+
+    text = path.read_text(encoding="utf-8")
+    assert deleted is True
+    assert "Existing note." in text
+    assert "**Q: First question?**\n\nFirst answer." in text
+    assert "Second question" not in text
+    assert "Second answer" not in text
+
+
+@pytest.mark.asyncio
+async def test_review_delete_action_removes_last_answer_for_selected_pack(temp_config):
+    from osmind.github.models import GHPR
+    from osmind.services.library import PackLibrary
+    from osmind.tui.screens.review import _append_answer_to_pack
+    from textual.widgets import DataTable
+
+    library = PackLibrary(
+        temp_config.notes_vault,
+        temp_config.notes_vault / "osmind" / ".cache" / "osmind.db",
+    )
+    path = library.write_pr_pack(
+        GHPR(
+            number=13,
+            title="Review delete pack",
+            body="",
+            url="https://github.com/o/r/pull/13",
+            repo="o/r",
+            updated_at="u13",
+        )
+    )
+    _append_answer_to_pack(path, "Can this be deleted?", "Yes, delete this answer.")
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        app.action_switch_tab("review")
+        await pilot.pause()
+        await pilot.pause()
+        table = app.query_one("#notes-table", DataTable)
+        table.cursor_coordinate = (0, 0)
+
+        app.query_one("ReviewScreen").action_delete_last_answer()
+        await pilot.pause()
+
+    text = path.read_text(encoding="utf-8")
+    assert "Can this be deleted?" not in text
+    assert "Yes, delete this answer." not in text
+
+
+def test_review_bindings_include_delete_last_answer():
+    from osmind.tui.screens.review import ReviewScreen
+
+    bindings_by_action = {binding[1]: binding for binding in ReviewScreen.BINDINGS}
+
+    assert bindings_by_action["delete_last_answer"][0] == "delete"
+
+
 @pytest.mark.asyncio
 async def test_discover_generate_pack_writes_selected_issue(temp_config, monkeypatch):
     from osmind.github.models import GHIssue
@@ -716,9 +919,172 @@ def test_discover_bindings_include_generate_and_open_pack():
     from osmind.tui.screens.discover import DiscoverScreen
 
     bindings_by_action = {b[1]: b[2] for b in DiscoverScreen.BINDINGS}
+    keys_by_action = {b[1]: b[0] for b in DiscoverScreen.BINDINGS}
 
     assert bindings_by_action["generate_pack"] == "Generate Packet"
     assert bindings_by_action["open_pack"] == "Open Packet"
+    assert bindings_by_action["mark_continue"] == "Continue"
+    assert bindings_by_action["mark_defer"] == "Defer"
+    assert bindings_by_action["mark_discard"] == "Discard"
+    assert bindings_by_action["update"] == "Update from GitHub"
+    assert bindings_by_action["rescore"] == "Re-rank"
+    assert keys_by_action["update"] == "u"
+    assert keys_by_action["rescore"] == "s"
+    assert "r" not in {binding[0] for binding in DiscoverScreen.BINDINGS}
+
+
+@pytest.mark.asyncio
+async def test_discover_update_ignores_cached_issues_and_rescores(temp_config, monkeypatch):
+    from osmind.cache.store import CacheStore
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    from osmind.tui.widgets.issue_list import IssueTable
+    import osmind.engine.llm
+    import osmind.engine.ranker
+    import osmind.github.client
+
+    cache = CacheStore(temp_config.notes_vault / "osmind" / ".cache" / "osmind.db")
+    cached = GHIssue(1, "Cached issue", "Old body", [], "old", "sgl-project/sglang", "open")
+    cache.upsert_issue(cached)
+    cache.update_issue_score(cached.repo, "issue", cached.number, 0.1, "old cached reason")
+    fetched = GHIssue(2, "Fetched issue", "New body", [], "new", "sgl-project/sglang", "open")
+    calls = []
+
+    class RecordingGitHubClient:
+        def __init__(self, token=""):
+            pass
+
+        def get_issues(self, repo, limit=30, include_comments=False):
+            calls.append((repo, limit, include_comments))
+            return [fetched]
+
+    class DummyLLMClient:
+        def __init__(self, cfg):
+            pass
+
+    class RecordingRanker:
+        def __init__(self, llm, interests, skills, resources=None):
+            assert resources == {"gpus": "4x RTX 4090"}
+
+        def score_one(self, issue):
+            issue.score = 0.8
+            issue.priority = "high"
+            issue.fit = "high"
+            issue.resource_fit = "ok"
+            issue.actionability = "high"
+            issue.reason = "fresh score"
+            return issue
+
+    monkeypatch.setattr(osmind.github.client, "GitHubClient", RecordingGitHubClient)
+    monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
+    monkeypatch.setattr(osmind.engine.ranker, "Ranker", RecordingRanker)
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        await discover.action_update()
+
+        table = app.query_one(IssueTable)
+        row = table.get_row_at(0)
+
+    fresh_cache = CacheStore(temp_config.notes_vault / "osmind" / ".cache" / "osmind.db")
+    cached_new_issue = {issue.number: issue for issue in fresh_cache.list_issues("sgl-project/sglang")}[2]
+    assert calls == [("sgl-project/sglang", 30, False)]
+    assert row[0] == "Do now"
+    assert "fresh score" in row[1]
+    assert row[2] == "2"
+    assert cached_new_issue.priority == "high"
+    assert cached_new_issue.reason == "fresh score"
+
+
+@pytest.mark.asyncio
+async def test_discover_rescore_uses_cached_issues_without_github(temp_config, monkeypatch):
+    from osmind.cache.store import CacheStore
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    from osmind.tui.widgets.issue_list import IssueTable
+    import osmind.engine.llm
+    import osmind.engine.ranker
+    import osmind.github.client
+
+    issue = GHIssue(42, "Cached issue", "Body", [], "u", "sgl-project/sglang", "open")
+    cache = CacheStore(temp_config.notes_vault / "osmind" / ".cache" / "osmind.db")
+    cache.upsert_issue(issue)
+    cache.update_issue_score(issue.repo, "issue", issue.number, 0.1, "old score")
+
+    class FailingGitHubClient:
+        def __init__(self, token=""):
+            pass
+
+        def get_issues(self, repo, limit=30, include_comments=False):
+            raise AssertionError("Rescore should not fetch from GitHub")
+
+    class DummyLLMClient:
+        def __init__(self, cfg):
+            pass
+
+    class ResourceAwareRanker:
+        def __init__(self, llm, interests, skills, resources=None):
+            assert resources == {"gpus": "4x RTX 4090"}
+
+        def score_one(self, issue):
+            issue.score = 0.2
+            issue.priority = "low"
+            issue.fit = "high"
+            issue.resource_fit = "blocked"
+            issue.actionability = "low"
+            issue.reason = "rescored with current resources"
+            return issue
+
+    monkeypatch.setattr(osmind.github.client, "GitHubClient", FailingGitHubClient)
+    monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
+    monkeypatch.setattr(osmind.engine.ranker, "Ranker", ResourceAwareRanker)
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        await discover.action_rescore()
+
+        table = app.query_one(IssueTable)
+        row = table.get_row_at(0)
+
+    assert row[0] == "Defer"
+    assert row[1].startswith("resource blocked:")
+    assert "rescored with current resources" in row[1]
+    assert row[2] == "42"
+
+
+@pytest.mark.asyncio
+async def test_discover_decision_action_creates_packet_and_marks_decision(temp_config, monkeypatch):
+    from osmind.github.models import GHIssue
+    from osmind.services.library import PackLibrary
+    from osmind.tui.screens.discover import DiscoverScreen
+
+    issue = GHIssue(
+        number=42,
+        title="Tokenizer leak",
+        body="Body",
+        labels=["bug"],
+        url="https://github.com/o/r/issues/42",
+        repo="o/r",
+        state="open",
+        updated_at="u42",
+    )
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        monkeypatch.setattr(discover, "_get_selected_issue", lambda: issue)
+
+        await discover.action_mark_continue()
+
+    path = temp_config.notes_vault / "osmind" / "o_r" / "issue-42-tokenizer-leak.md"
+    library = PackLibrary(
+        temp_config.notes_vault,
+        temp_config.notes_vault / "osmind" / ".cache" / "osmind.db",
+    )
+    markdown = path.read_text(encoding="utf-8")
+    assert "decision: continue" in markdown
+    assert library.list_packs()[0]["decision"] == "continue"
 
 
 @pytest.mark.asyncio
@@ -733,6 +1099,45 @@ async def test_packs_screen_uses_contribution_packet_language(temp_config):
     assert any("Contribution Packets" in label for label in labels)
     assert all("Learning Packs" not in label for label in labels)
     assert any("decision" in str(column.label).lower() for column in table.columns.values())
+
+
+@pytest.mark.asyncio
+async def test_packs_screen_decision_action_updates_packet_and_table(temp_config):
+    from osmind.github.models import GHIssue
+    from osmind.services.library import PackLibrary
+    from textual.widgets import DataTable
+
+    library = PackLibrary(
+        temp_config.notes_vault,
+        temp_config.notes_vault / "osmind" / ".cache" / "osmind.db",
+    )
+    path = library.write_issue_pack(
+        GHIssue(
+            number=42,
+            title="Tokenizer leak",
+            body="Body",
+            labels=["bug"],
+            url="https://github.com/o/r/issues/42",
+            repo="o/r",
+            state="open",
+            updated_at="u42",
+        )
+    )
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        app.action_switch_tab("packs")
+        await pilot.pause()
+        table = app.query_one("#packs-table", DataTable)
+        table.cursor_coordinate = (0, 0)
+
+        await app.query_one("PacksScreen").action_mark_discard()
+
+        visible_row = table.get_row_at(0)
+
+    markdown = path.read_text(encoding="utf-8")
+    assert "decision: discard" in markdown
+    assert "discard" in [str(cell) for cell in visible_row]
 
 
 @pytest.mark.asyncio

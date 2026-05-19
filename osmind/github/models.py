@@ -23,6 +23,10 @@ class GHIssue:
     reason: str = ""
     updated_at: str = ""
     comments: list[GHComment] = field(default_factory=list)
+    priority: str = "unknown"
+    fit: str = "unknown"
+    resource_fit: str = "unknown"
+    actionability: str = "unknown"
 
 
 @dataclass

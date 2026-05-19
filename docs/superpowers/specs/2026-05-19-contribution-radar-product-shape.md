@@ -63,11 +63,13 @@ Recommended top-level sections:
 
 The current Discover/Packs/Review structure can remain internally, but the user-facing language should make Today or Radar the primary entry point.
 
+The first TUI slice should keep the existing Discover tab but present it as an opportunity queue. The table should lead with the recommended action and reason instead of internal scoring dimensions.
+
 ## Today/Radar Item Design
 
 Each recommended item should show enough evidence to be trusted.
 
-Minimum visible fields:
+Minimum visible fields for the full radar:
 
 - repo and issue/PR number,
 - title,
@@ -76,11 +78,22 @@ Minimum visible fields:
 - labels,
 - freshness,
 - fit score,
+- resource fit,
 - difficulty estimate,
 - learning value estimate,
 - agent suitability,
 - whether a packet already exists,
 - one-line recommendation reason.
+
+Minimum visible fields for the current TUI slice:
+
+- recommended action,
+- one-line reason,
+- issue number,
+- title,
+- labels.
+
+Structured dimensions such as fit, resource fit, and actionability should stay available in the detail view rather than forcing the first screen to look like a scoring dashboard.
 
 The detail view should explain the recommendation with evidence:
 
@@ -90,6 +103,8 @@ The detail view should explain the recommendation with evidence:
 - whether a likely test path exists,
 - whether maintainer discussion suggests it is still actionable,
 - whether the next step is reading, reproducing, validating, or implementing.
+
+In the TUI, the detail view should separate these jobs visually. The left pane should be a short, decision-oriented Analysis panel. The right pane should be a scrollable Source panel containing the generated summary, original issue text, and comments. `Tab` should switch focus between the two panes.
 
 ## Action Model
 
@@ -163,6 +178,7 @@ The app should move beyond a single score and one sentence.
 Each item should have these analysis fields:
 
 - fit: how closely it matches the user's profile,
+- resource_fit: whether the user's configured GPUs, time, and local environment are enough to reproduce or validate the item,
 - difficulty: expected effort to understand or act,
 - learning_value: how much project context the user can gain,
 - actionability: whether the item has enough evidence to take a next step,

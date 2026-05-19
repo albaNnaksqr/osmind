@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 from pathlib import Path
+import re
 from textual.app import ComposeResult
 from textual.widgets import DataTable, Input, Label, LoadingIndicator, RichLog
 from textual.containers import Horizontal, Vertical
@@ -16,6 +17,7 @@ class ReviewScreen(Vertical):
     """
     BINDINGS = [
         ("a", "review_all", "Review All"),
+        ("delete", "delete_last_answer", "Delete Last Answer"),
     ]
 
     def compose(self) -> ComposeResult:
@@ -23,7 +25,7 @@ class ReviewScreen(Vertical):
             with Vertical(id="notes-pane"):
                 yield Label("[bold]Contribution Packets[/bold]", markup=True)
                 yield DataTable(id="notes-table", cursor_type="row")
-                yield Label("[dim]Enter: review pack  a: review all[/dim]", markup=True)
+                yield Label("[dim]Enter: review pack  a: review all  Delete: remove last answer[/dim]", markup=True)
             with Vertical(id="qa-pane"):
                 yield LoadingIndicator(id="loader")
                 yield RichLog(id="review-log", wrap=True, markup=True)
@@ -71,6 +73,16 @@ class ReviewScreen(Vertical):
     def action_reload(self) -> None:
         self._load_notes_list()
 
+    def _selected_note(self) -> dict | None:
+        table = self.query_one("#notes-table", DataTable)
+        if table.cursor_row is None or table.cursor_row >= len(table.ordered_rows):
+            return None
+        row_key = table.ordered_rows[table.cursor_row].key
+        try:
+            return self._notes[int(row_key.value)]
+        except (IndexError, TypeError, ValueError):
+            return None
+
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         idx = int(event.row_key.value)
         note = self._notes[idx]
@@ -115,6 +127,22 @@ class ReviewScreen(Vertical):
             self.notify("还没有笔记", severity="warning")
             return
         self.run_worker(self._review_all(), exclusive=True)
+
+    def action_delete_last_answer(self) -> None:
+        note = self._current_note or self._selected_note()
+        if note is None:
+            self.notify("先选中一个 Contribution Packet", severity="warning")
+            return
+
+        path = Path(note["path"])
+        if not _delete_last_answer_from_pack(path):
+            self.notify("没有可删除的 Review 回答", severity="warning")
+            return
+
+        self._current_q = None
+        log = self.query_one(RichLog)
+        log.clear()
+        log.write("[dim]已删除最近一条 Review 回答。选中 pack 继续，或按 a 综合复习。[/dim]\n")
 
     async def _review_all(self) -> None:
         from osmind.engine.llm import LLMClient
@@ -184,3 +212,26 @@ def _append_answer_to_pack(path: Path, question: str, answer: str) -> None:
     else:
         updated = f"{text}\n\n## Notes\n\n{entry}\n"
     path.write_text(updated, encoding="utf-8")
+
+
+def _delete_last_answer_from_pack(path: Path) -> bool:
+    if not path.exists():
+        return False
+
+    text = path.read_text(encoding="utf-8").rstrip()
+    notes_matches = list(re.finditer(r"(?m)^## Notes\s*$", text))
+    if not notes_matches:
+        return False
+
+    notes_start = notes_matches[-1].end()
+    question_matches = [
+        match
+        for match in re.finditer(r"(?m)^\*\*Q: .+\*\*\s*$", text)
+        if match.start() >= notes_start
+    ]
+    if not question_matches:
+        return False
+
+    updated = text[: question_matches[-1].start()].rstrip() + "\n"
+    path.write_text(updated, encoding="utf-8")
+    return True
