@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any
+
+from osmind.github.models import GHComment, GHIssue
 
 
 class CacheStore:
@@ -33,6 +37,7 @@ class CacheStore:
                 )
                 """
             )
+            self._migrate_github_items_schema()
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS analysis (
@@ -58,6 +63,19 @@ class CacheStore:
             self._conn.rollback()
             raise
 
+    def _migrate_github_items_schema(self) -> None:
+        columns = self._pack_columns("github_items")
+        migrations = {
+            "body": "TEXT NOT NULL DEFAULT ''",
+            "labels_json": "TEXT NOT NULL DEFAULT '[]'",
+            "comments_json": "TEXT NOT NULL DEFAULT '[]'",
+            "score": "REAL NOT NULL DEFAULT 0",
+            "reason": "TEXT NOT NULL DEFAULT ''",
+        }
+        for column, definition in migrations.items():
+            if column not in columns:
+                self._conn.execute(f"ALTER TABLE github_items ADD COLUMN {column} {definition}")
+
     def _create_packs_table(self) -> None:
         self._conn.execute(
             """
@@ -68,6 +86,7 @@ class CacheStore:
                 number INTEGER NOT NULL,
                 path TEXT NOT NULL,
                 status TEXT NOT NULL,
+                decision TEXT NOT NULL DEFAULT 'undecided',
                 confidence TEXT NOT NULL,
                 source_updated_at TEXT NOT NULL,
                 generated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -80,12 +99,15 @@ class CacheStore:
 
     def _migrate_packs_schema(self) -> None:
         columns = self._pack_columns("packs")
+        if "decision" not in columns:
+            self._conn.execute("ALTER TABLE packs ADD COLUMN decision TEXT NOT NULL DEFAULT 'undecided'")
+            columns.add("decision")
         if {"id", "version"}.issubset(columns):
             return
 
         legacy_rows = self._conn.execute(
             """
-            SELECT repo, source_type, number, path, status, confidence, source_updated_at, generated_at, stale
+            SELECT repo, source_type, number, path, status, decision, confidence, source_updated_at, generated_at, stale
             FROM packs
             ORDER BY generated_at ASC, rowid ASC
             """
@@ -99,10 +121,12 @@ class CacheStore:
         if not self._table_exists("packs_old"):
             return
 
+        old_columns = self._pack_columns("packs_old")
+        decision_expr = "decision" if "decision" in old_columns else "'undecided' AS decision"
         current_version = self._conn.execute("SELECT COALESCE(MAX(version), 0) AS current_version FROM packs").fetchone()
         legacy_rows = self._conn.execute(
-            """
-            SELECT repo, source_type, number, path, status, confidence, source_updated_at, generated_at, stale
+            f"""
+            SELECT repo, source_type, number, path, status, {decision_expr}, confidence, source_updated_at, generated_at, stale
             FROM packs_old
             WHERE NOT EXISTS (
                 SELECT 1
@@ -122,8 +146,8 @@ class CacheStore:
             self._conn.execute(
                 """
                 INSERT INTO packs
-                    (repo, source_type, number, path, status, confidence, source_updated_at, generated_at, stale, version)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (repo, source_type, number, path, status, decision, confidence, source_updated_at, generated_at, stale, version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     row["repo"],
@@ -131,6 +155,7 @@ class CacheStore:
                     row["number"],
                     row["path"],
                     row["status"],
+                    row["decision"],
                     row["confidence"],
                     row["source_updated_at"],
                     row["generated_at"],
@@ -210,6 +235,91 @@ class CacheStore:
             or row["updated_at"] != updated_at
         )
 
+    def upsert_issue(self, issue: GHIssue) -> None:
+        labels_json = json.dumps(issue.labels, ensure_ascii=False)
+        comments_json = json.dumps(
+            [
+                {
+                    "author": comment.author,
+                    "body": comment.body,
+                    "url": comment.url,
+                    "created_at": comment.created_at,
+                }
+                for comment in issue.comments
+            ],
+            ensure_ascii=False,
+        )
+        body_hash = _hash_text(issue.body)
+        content_hash = _hash_text(f"{labels_json}\n{comments_json}")
+        try:
+            self._conn.execute(
+                """
+                INSERT INTO github_items
+                    (
+                        repo, source_type, number, title, body_hash, content_hash,
+                        state, url, updated_at, body, labels_json, comments_json, score, reason
+                    )
+                VALUES (?, 'issue', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(repo, source_type, number) DO UPDATE SET
+                    title = excluded.title,
+                    body_hash = excluded.body_hash,
+                    content_hash = excluded.content_hash,
+                    state = excluded.state,
+                    url = excluded.url,
+                    updated_at = excluded.updated_at,
+                    body = excluded.body,
+                    labels_json = excluded.labels_json,
+                    comments_json = excluded.comments_json,
+                    fetched_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    issue.repo,
+                    issue.number,
+                    issue.title,
+                    body_hash,
+                    content_hash,
+                    issue.state,
+                    issue.url,
+                    issue.updated_at,
+                    issue.body,
+                    labels_json,
+                    comments_json,
+                    issue.score,
+                    issue.reason,
+                ),
+            )
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
+
+    def update_issue_score(self, repo: str, source_type: str, number: int, score: float, reason: str) -> None:
+        try:
+            self._conn.execute(
+                """
+                UPDATE github_items
+                SET score = ?, reason = ?
+                WHERE repo = ? AND source_type = ? AND number = ?
+                """,
+                (score, reason, repo, source_type, number),
+            )
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
+
+    def list_issues(self, repo: str) -> list[GHIssue]:
+        rows = self._conn.execute(
+            """
+            SELECT repo, number, title, body, labels_json, comments_json, state, url, updated_at, score, reason
+            FROM github_items
+            WHERE repo = ? AND source_type = 'issue'
+            ORDER BY fetched_at DESC, number DESC
+            """,
+            (repo,),
+        ).fetchall()
+        return [_issue_from_row(row) for row in rows]
+
     def upsert_pack(
         self,
         repo: str,
@@ -219,6 +329,7 @@ class CacheStore:
         status: str,
         confidence: str,
         source_updated_at: str,
+        decision: str = "undecided",
     ) -> None:
         try:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -226,18 +337,19 @@ class CacheStore:
             self._conn.execute(
                 """
                 INSERT INTO packs
-                    (repo, source_type, number, path, status, confidence, source_updated_at, stale, version)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
+                    (repo, source_type, number, path, status, decision, confidence, source_updated_at, stale, version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
                 ON CONFLICT(repo, source_type, number) DO UPDATE SET
                     path = excluded.path,
                     status = excluded.status,
+                    decision = excluded.decision,
                     confidence = excluded.confidence,
                     source_updated_at = excluded.source_updated_at,
                     generated_at = CURRENT_TIMESTAMP,
                     stale = 0,
                     version = excluded.version
                 """,
-                (repo, source_type, number, str(path), status, confidence, source_updated_at, next_version),
+                (repo, source_type, number, str(path), status, decision, confidence, source_updated_at, next_version),
             )
             self._conn.commit()
         except Exception:
@@ -251,7 +363,7 @@ class CacheStore:
     def list_packs(self) -> list[dict[str, Any]]:
         rows = self._conn.execute(
             """
-            SELECT repo, source_type, number, path, status, confidence, source_updated_at, generated_at, stale
+            SELECT repo, source_type, number, path, status, decision, confidence, source_updated_at, generated_at, stale
             FROM packs
             ORDER BY version DESC, id DESC
             """
@@ -261,10 +373,48 @@ class CacheStore:
     def get_pack(self, repo: str, source_type: str, number: int) -> dict[str, Any] | None:
         row = self._conn.execute(
             """
-            SELECT repo, source_type, number, path, status, confidence, source_updated_at, generated_at, stale
+            SELECT repo, source_type, number, path, status, decision, confidence, source_updated_at, generated_at, stale
             FROM packs
             WHERE repo = ? AND source_type = ? AND number = ?
             """,
             (repo, source_type, number),
         ).fetchone()
         return dict(row) if row is not None else None
+
+
+def _hash_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _issue_from_row(row: sqlite3.Row) -> GHIssue:
+    try:
+        labels = json.loads(row["labels_json"] or "[]")
+    except json.JSONDecodeError:
+        labels = []
+    try:
+        comments_data = json.loads(row["comments_json"] or "[]")
+    except json.JSONDecodeError:
+        comments_data = []
+    comments = [
+        GHComment(
+            author=str(comment.get("author", "")),
+            body=str(comment.get("body", "")),
+            url=str(comment.get("url", "")),
+            created_at=str(comment.get("created_at", "")),
+        )
+        for comment in comments_data
+        if isinstance(comment, dict)
+    ]
+    return GHIssue(
+        number=int(row["number"]),
+        title=str(row["title"]),
+        body=str(row["body"]),
+        labels=[str(label) for label in labels] if isinstance(labels, list) else [],
+        url=str(row["url"]),
+        repo=str(row["repo"]),
+        state=str(row["state"]),
+        score=float(row["score"]),
+        reason=str(row["reason"]),
+        updated_at=str(row["updated_at"]),
+        comments=comments,
+    )

@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 
 
 PackStatus = str
+PackDecision = str
 PackConfidence = str
 
 
@@ -27,6 +28,7 @@ class PackSection:
 class LearningPack:
     source: SourceRef
     status: PackStatus = "unread"
+    decision: PackDecision = "undecided"
     confidence: PackConfidence = "unknown"
     modules: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=lambda: ["osmind", "open-source"])

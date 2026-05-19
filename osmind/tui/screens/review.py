@@ -21,7 +21,7 @@ class ReviewScreen(Vertical):
     def compose(self) -> ComposeResult:
         with Horizontal():
             with Vertical(id="notes-pane"):
-                yield Label("[bold]Learning Packs[/bold]", markup=True)
+                yield Label("[bold]Contribution Packets[/bold]", markup=True)
                 yield DataTable(id="notes-table", cursor_type="row")
                 yield Label("[dim]Enter: review pack  a: review all[/dim]", markup=True)
             with Vertical(id="qa-pane"):
@@ -50,7 +50,7 @@ class ReviewScreen(Vertical):
         log.clear()
 
         if not self._notes:
-            log.write("[dim]还没有 Learning Pack。先在 Discover 里生成，或去 Packs 查看已生成内容。[/dim]")
+            log.write("[dim]还没有 Contribution Packet。先在 Discover 里生成，或去 Packs 查看已生成内容。[/dim]")
             return
 
         for idx, note in enumerate(self._notes):
@@ -61,7 +61,7 @@ class ReviewScreen(Vertical):
                 key=str(idx),
             )
         log.write(
-            f"[bold]{len(self._notes)} 个 Learning Pack[/bold]\n\n"
+            f"[bold]{len(self._notes)} 个 Contribution Packet[/bold]\n\n"
             "选中一个 pack 按 [bold]Enter[/bold] 开始针对性复习，\n"
             "或按 [bold]a[/bold] 让 osmind 从所有 pack 里找知识盲点提问。\n"
         )
@@ -95,7 +95,7 @@ class ReviewScreen(Vertical):
             def _ask():
                 llm = LLMClient(llm_cfg)
                 return llm.chat(
-                    "你是一个 Socratic 学习助手。根据用户关于这个开源仓库条目的 Learning Pack，"
+                    "你是一个 Socratic 学习助手。根据用户关于这个开源仓库条目的 Contribution Packet，"
                     "用中文提一个能加深理解的问题。只问一个问题，不超过60字。",
                     content[:600],
                     max_tokens=100,
@@ -134,13 +134,13 @@ class ReviewScreen(Vertical):
                 snippets.append(f"{item_label} #{note['number']} ({note['repo']}): {content[:300]}")
             combined = "\n\n".join(snippets)
             if not combined:
-                self.notify("没有可读取的 Learning Pack", severity="warning")
+                self.notify("没有可读取的 Contribution Packet", severity="warning")
                 return
 
             def _ask():
                 llm = LLMClient(llm_cfg)
                 return llm.chat(
-                    "你是一个 Socratic 学习助手。根据用户多个 Learning Pack，"
+                    "你是一个 Socratic 学习助手。根据用户多个 Contribution Packet，"
                     "找出知识盲点或矛盾，用中文提一个综合性问题。只问一个问题，不超过60字。",
                     combined,
                     max_tokens=100,

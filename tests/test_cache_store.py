@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from osmind.cache.store import CacheStore
+from osmind.github.models import GHComment, GHIssue
 
 
 def test_cache_marks_unchanged_item_fresh(tmp_path: Path):
@@ -40,6 +41,37 @@ def test_cache_marks_changed_hash_stale(tmp_path: Path):
     assert store.is_item_stale("o/r", "issue", 42, "body2", "comments1", "u1") is True
 
 
+def test_cache_round_trips_issue_with_score_and_comments(tmp_path: Path):
+    store = CacheStore(tmp_path / "osmind.db")
+    issue = GHIssue(
+        number=42,
+        title="Tokenizer leak",
+        body="The tokenizer cache keeps growing.",
+        labels=["bug", "good first issue"],
+        url="https://github.com/o/r/issues/42",
+        repo="o/r",
+        state="open",
+        updated_at="u42",
+        comments=[
+            GHComment("maintainer", "Please add a regression test.", "u", "c1"),
+        ],
+    )
+
+    store.upsert_issue(issue)
+    store.update_issue_score("o/r", "issue", 42, 0.8, "适合做")
+
+    cached = store.list_issues("o/r")
+
+    assert len(cached) == 1
+    assert cached[0].number == 42
+    assert cached[0].title == "Tokenizer leak"
+    assert cached[0].body == "The tokenizer cache keeps growing."
+    assert cached[0].labels == ["bug", "good first issue"]
+    assert cached[0].score == 0.8
+    assert cached[0].reason == "适合做"
+    assert cached[0].comments[0].author == "maintainer"
+
+
 def test_cache_rolls_back_failed_item_write_before_pack_write(tmp_path: Path):
     store = CacheStore(tmp_path / "osmind.db")
 
@@ -72,6 +104,27 @@ def test_cache_records_pack_metadata(tmp_path: Path):
     assert packs[0]["source_type"] == "pr"
     assert packs[0]["number"] == 7
     assert packs[0]["path"] == str(pack_path)
+    assert packs[0]["decision"] == "undecided"
+
+
+def test_cache_records_pack_decision(tmp_path: Path):
+    store = CacheStore(tmp_path / "osmind.db")
+    pack_path = tmp_path / "pack.md"
+    store.upsert_pack(
+        repo="o/r",
+        source_type="issue",
+        number=42,
+        path=pack_path,
+        status="inspecting",
+        confidence="low",
+        source_updated_at="u1",
+        decision="continue",
+    )
+
+    pack = store.get_pack("o/r", "issue", 42)
+
+    assert pack is not None
+    assert pack["decision"] == "continue"
 
 
 def test_cache_lists_same_second_packs_newest_first(tmp_path: Path):
@@ -139,10 +192,11 @@ def test_cache_migrates_old_pack_schema_without_id_or_version(tmp_path: Path):
     columns = {row["name"] for row in store._conn.execute("PRAGMA table_info(packs)").fetchall()}
     packs = store.list_packs()
 
-    assert {"id", "version"}.issubset(columns)
+    assert {"id", "version", "decision"}.issubset(columns)
     assert [pack["number"] for pack in packs] == [2, 1]
     assert packs[1]["path"] == str(tmp_path / "old.md")
     assert packs[1]["status"] == "read"
+    assert packs[1]["decision"] == "undecided"
 
 
 def test_cache_recovers_stranded_pack_rows_from_interrupted_migration(tmp_path: Path):

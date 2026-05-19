@@ -59,6 +59,33 @@ async def test_tab_navigation(mock_config):
         assert "review" in tab_ids
 
 
+@pytest.mark.asyncio
+async def test_escape_moves_focus_from_review_input_back_to_table(temp_config):
+    from textual.widgets import DataTable, Input
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        app.action_switch_tab("review")
+        review_input = app.query_one("#review-input", Input)
+        review_table = app.query_one("#notes-table", DataTable)
+        review_input.focus()
+
+        await pilot.press("escape")
+
+        assert app.focused is review_table
+
+
+@pytest.mark.asyncio
+async def test_discover_toolbar_does_not_expand_vertically(temp_config):
+    app = OsmindApp(temp_config)
+    async with app.run_test(size=(100, 40)) as pilot:
+        toolbar = app.query_one("#toolbar")
+        issue_list = app.query_one("#issue-list-view")
+
+        assert toolbar.region.height <= 4
+        assert issue_list.region.y <= 8
+
+
 def test_discover_has_no_learn_binding():
     from osmind.tui.screens.discover import DiscoverScreen
 
@@ -66,6 +93,59 @@ def test_discover_has_no_learn_binding():
 
     assert "open_in_learn" not in binding_actions
     assert all("learn" not in action for action in binding_actions)
+
+
+def test_discover_agent_launchers_are_not_shown_as_primary_bindings():
+    from osmind.tui.screens.discover import DiscoverScreen
+
+    binding_text = " ".join(f"{binding[0]} {binding[1]} {binding[2]}" for binding in DiscoverScreen.BINDINGS)
+
+    assert "Claude" not in binding_text
+    assert "Codex" not in binding_text
+    assert "launch_claude" not in binding_text
+    assert "launch_codex" not in binding_text
+
+
+@pytest.mark.asyncio
+async def test_discover_hidden_agent_shortcuts_still_dispatch(temp_config, monkeypatch):
+    from osmind.tui.screens.discover import DiscoverScreen
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        calls = []
+
+        async def fake_launch_claude():
+            calls.append("claude")
+
+        async def fake_launch_codex():
+            calls.append("codex")
+
+        monkeypatch.setattr(discover, "action_launch_claude", fake_launch_claude)
+        monkeypatch.setattr(discover, "action_launch_codex", fake_launch_codex)
+
+        await discover.key_c()
+        await discover.key_x()
+
+    assert calls == ["claude", "codex"]
+
+
+def test_packs_reload_does_not_shadow_review_navigation_key():
+    from osmind.tui.app import OsmindApp
+    from osmind.tui.screens.packs import PacksScreen
+
+    review_keys = {
+        binding[0]
+        for binding in OsmindApp.BINDINGS
+        if binding[1] == "switch_tab('review')"
+    }
+    packs_reload_keys = {
+        binding[0]
+        for binding in PacksScreen.BINDINGS
+        if binding[1] == "reload"
+    }
+
+    assert packs_reload_keys.isdisjoint(review_keys)
 
 
 @pytest.mark.asyncio
@@ -77,7 +157,7 @@ async def test_discover_fetch_exception_is_logged(temp_config, monkeypatch):
         def __init__(self, token=""):
             pass
 
-        def get_issues(self, repo, limit=30):
+        def get_issues(self, repo, limit=30, include_comments=False):
             raise RuntimeError("no connected db")
 
     monkeypatch.setattr(osmind.github.client, "GitHubClient", FailingGitHubClient)
@@ -91,6 +171,123 @@ async def test_discover_fetch_exception_is_logged(temp_config, monkeypatch):
     text = log_path.read_text(encoding="utf-8")
     assert "Failed to fetch issues" in text
     assert "RuntimeError: no connected db" in text
+
+
+@pytest.mark.asyncio
+async def test_discover_fetch_does_not_request_issue_comments(temp_config, monkeypatch):
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    import osmind.github.client
+
+    calls = []
+
+    class RecordingGitHubClient:
+        def __init__(self, token=""):
+            pass
+
+        def get_issues(self, repo, limit=30, include_comments=False):
+            calls.append((repo, limit, include_comments))
+            return [GHIssue(42, "Tokenizer leak", "Body", [], "u", "o/r", "open")]
+
+    monkeypatch.setattr(osmind.github.client, "GitHubClient", RecordingGitHubClient)
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        await discover.action_fetch()
+
+    assert calls == [("sgl-project/sglang", 30, False)]
+
+
+@pytest.mark.asyncio
+async def test_discover_fetch_uses_cached_issues_without_github_or_rescoring(temp_config, monkeypatch):
+    from osmind.cache.store import CacheStore
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    from osmind.tui.widgets.issue_list import IssueTable
+    import osmind.engine.ranker
+    import osmind.github.client
+
+    issue = GHIssue(
+        42,
+        "Tokenizer leak",
+        "Body",
+        ["bug"],
+        "https://github.com/sgl-project/sglang/issues/42",
+        "sgl-project/sglang",
+        "open",
+        score=0.8,
+        reason="cached reason",
+        updated_at="u42",
+    )
+    cache = CacheStore(temp_config.notes_vault / "osmind" / ".cache" / "osmind.db")
+    cache.upsert_issue(issue)
+    cache.update_issue_score(issue.repo, "issue", issue.number, issue.score, issue.reason)
+
+    class FailingGitHubClient:
+        def __init__(self, token=""):
+            pass
+
+        def get_issues(self, repo, limit=30, include_comments=False):
+            raise AssertionError("GitHub should not be called for cached issues")
+
+    class FailingRanker:
+        def __init__(self, llm, interests, skills):
+            pass
+
+        def score_one(self, issue):
+            raise AssertionError("Cached issues should not be rescored")
+
+    monkeypatch.setattr(osmind.github.client, "GitHubClient", FailingGitHubClient)
+    monkeypatch.setattr(osmind.engine.ranker, "Ranker", FailingRanker)
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        await discover.action_fetch()
+
+        table = app.query_one(IssueTable)
+        assert table.row_count == 1
+        assert discover._issues_by_number["42"].score == 0.8
+        assert discover._issues_by_number["42"].reason == "cached reason"
+
+
+@pytest.mark.asyncio
+async def test_discover_fetch_sorts_cached_issues_by_score_and_shows_reason(temp_config, monkeypatch):
+    from osmind.cache.store import CacheStore
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    from osmind.tui.widgets.issue_list import IssueTable
+    import osmind.github.client
+
+    issues = [
+        GHIssue(1, "Low match", "Body", [], "u1", "sgl-project/sglang", "open", score=0.2, reason="low reason"),
+        GHIssue(2, "High match", "Body", [], "u2", "sgl-project/sglang", "open", score=0.9, reason="high reason"),
+    ]
+    cache = CacheStore(temp_config.notes_vault / "osmind" / ".cache" / "osmind.db")
+    for issue in issues:
+        cache.upsert_issue(issue)
+        cache.update_issue_score(issue.repo, "issue", issue.number, issue.score, issue.reason)
+
+    class FailingGitHubClient:
+        def __init__(self, token=""):
+            pass
+
+        def get_issues(self, repo, limit=30, include_comments=False):
+            raise AssertionError("GitHub should not be called for cached issues")
+
+    monkeypatch.setattr(osmind.github.client, "GitHubClient", FailingGitHubClient)
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        await discover.action_fetch()
+
+        table = app.query_one(IssueTable)
+        first_row = table.get_row_at(0)
+
+        assert first_row[1] == "2"
+        assert first_row[4] == "high reason"
 
 
 @pytest.mark.asyncio
@@ -137,6 +334,152 @@ async def test_discover_scoring_continues_after_issue_error(temp_config, monkeyp
     text = (temp_config.notes_vault / "osmind" / ".cache" / "osmind.log").read_text(encoding="utf-8")
     assert "Failed to score issue o/r#1" in text
     assert "RuntimeError: no connected db" in text
+
+
+@pytest.mark.asyncio
+async def test_discover_scoring_reorders_rows_and_updates_reason(temp_config, monkeypatch):
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    from osmind.tui.widgets.issue_list import IssueTable
+    import osmind.engine.llm
+    import osmind.engine.ranker
+
+    issues = [
+        GHIssue(1, "Low match", "Body", [], "u1", "o/r", "open"),
+        GHIssue(2, "High match", "Body", [], "u2", "o/r", "open"),
+    ]
+
+    class DummyLLMClient:
+        def __init__(self, cfg):
+            pass
+
+    class OrderedRanker:
+        def __init__(self, llm, interests, skills):
+            pass
+
+        def score_one(self, issue):
+            issue.score = 0.9 if issue.number == 2 else 0.2
+            issue.reason = "high reason" if issue.number == 2 else "low reason"
+            return issue
+
+    monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
+    monkeypatch.setattr(osmind.engine.ranker, "Ranker", OrderedRanker)
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        table = app.query_one(IssueTable)
+        table.populate(issues)
+        discover._issues_by_number = {str(issue.number): issue for issue in issues}
+
+        await discover._score_progressively(issues, "o/r", "")
+
+        first_row = table.get_row_at(0)
+        assert first_row[1] == "2"
+        assert first_row[4] == "high reason"
+
+
+@pytest.mark.asyncio
+async def test_discover_view_issue_shows_original_text_and_summary(temp_config, monkeypatch):
+    from osmind.github.models import GHComment, GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    from osmind.tui.widgets.issue_list import IssueTable
+    from textual.widgets import Static
+    import osmind.engine.issue_explainer
+    import osmind.engine.llm
+
+    long_tail = "FULL_TEXT_SENTINEL_" + ("x" * 1900)
+    issue = GHIssue(
+        42,
+        "Tokenizer leak",
+        f"The tokenizer cache keeps growing.\n\n{long_tail}",
+        ["bug"],
+        "https://github.com/o/r/issues/42",
+        "o/r",
+        "open",
+        comments=[
+            GHComment("maintainer", "Please include a regression test.", "u", "2026-05-15T01:02:03+00:00")
+        ],
+    )
+
+    class DummyLLMClient:
+        def __init__(self, cfg):
+            pass
+
+    class DummyIssueExplainer:
+        def __init__(self, llm):
+            pass
+
+        def summarize(self, issue):
+            return "这是 tokenizer cache 泄漏问题，适合先补复现测试。"
+
+    monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
+    monkeypatch.setattr(osmind.engine.issue_explainer, "IssueExplainer", DummyIssueExplainer)
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        table = app.query_one(IssueTable)
+        table.populate([issue])
+        table.cursor_coordinate = (0, 0)
+        discover._issues_by_number = {str(issue.number): issue}
+
+        await discover.action_view_issue()
+
+        detail = app.query_one("#issue-detail-panel", Static).content
+
+    assert "Issue #42: Tokenizer leak" in str(detail)
+    assert "The tokenizer cache keeps growing." in str(detail)
+    assert long_tail in str(detail)
+    assert "maintainer: Please include a regression test." in str(detail)
+    assert "这是 tokenizer cache 泄漏问题" in str(detail)
+    assert "继续/放弃判断" in str(detail)
+    assert "Continue" in str(detail)
+    assert "Stop" in str(detail)
+
+
+@pytest.mark.asyncio
+async def test_discover_issue_detail_is_a_separate_view_and_escape_returns_to_list(temp_config, monkeypatch):
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    from osmind.tui.widgets.issue_list import IssueTable
+    import osmind.engine.issue_explainer
+    import osmind.engine.llm
+
+    issue = GHIssue(42, "Tokenizer leak", "Body", [], "u", "o/r", "open")
+
+    class DummyLLMClient:
+        def __init__(self, cfg):
+            pass
+
+    class DummyIssueExplainer:
+        def __init__(self, llm):
+            pass
+
+        def summarize(self, issue):
+            return "摘要"
+
+    monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
+    monkeypatch.setattr(osmind.engine.issue_explainer, "IssueExplainer", DummyIssueExplainer)
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        table = app.query_one(IssueTable)
+        table.populate([issue])
+        table.cursor_coordinate = (0, 0)
+        discover._issues_by_number = {str(issue.number): issue}
+
+        await discover.action_view_issue()
+
+        assert app.query_one("#issue-list-view").display is False
+        assert app.query_one("#issue-detail-view").display is True
+
+        await pilot.press("escape")
+
+        assert app.query_one("#issue-list-view").display is True
+        assert app.query_one("#issue-detail-view").display is False
+        assert app.focused is table
 
 
 @pytest.mark.asyncio
@@ -225,6 +568,38 @@ async def test_switching_to_packs_lazy_loads_existing_packs(temp_config):
         app.action_switch_tab("packs")
         await pilot.pause()
         assert table.row_count == 1
+
+
+@pytest.mark.asyncio
+async def test_switching_to_packs_focuses_packs_table(temp_config):
+    from osmind.github.models import GHPR
+    from osmind.services.library import PackLibrary
+    from textual.widgets import DataTable
+
+    library = PackLibrary(
+        temp_config.notes_vault,
+        temp_config.notes_vault / "osmind" / ".cache" / "osmind.db",
+    )
+    library.write_pr_pack(
+        GHPR(
+            number=12,
+            title="Focusable Pack",
+            body="",
+            url="https://github.com/o/r/pull/12",
+            repo="o/r",
+            updated_at="u12",
+        )
+    )
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        table = app.query_one("#packs-table", DataTable)
+        await pilot.pause()
+
+        app.action_switch_tab("packs")
+        await pilot.pause()
+
+        assert app.focused is table
 
 
 @pytest.mark.asyncio
@@ -340,10 +715,35 @@ async def test_discover_generate_pack_writes_selected_issue(temp_config, monkeyp
 def test_discover_bindings_include_generate_and_open_pack():
     from osmind.tui.screens.discover import DiscoverScreen
 
-    binding_actions = {b[1] for b in DiscoverScreen.BINDINGS}
+    bindings_by_action = {b[1]: b[2] for b in DiscoverScreen.BINDINGS}
 
-    assert "generate_pack" in binding_actions
-    assert "open_pack" in binding_actions
+    assert bindings_by_action["generate_pack"] == "Generate Packet"
+    assert bindings_by_action["open_pack"] == "Open Packet"
+
+
+@pytest.mark.asyncio
+async def test_packs_screen_uses_contribution_packet_language(temp_config):
+    from textual.widgets import DataTable, Label
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        labels = [str(label.content) for label in app.query(Label)]
+        table = app.query_one("#packs-table", DataTable)
+
+    assert any("Contribution Packets" in label for label in labels)
+    assert all("Learning Packs" not in label for label in labels)
+    assert any("decision" in str(column.label).lower() for column in table.columns.values())
+
+
+@pytest.mark.asyncio
+async def test_review_screen_uses_contribution_packet_language(temp_config):
+    from textual.widgets import Label
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        labels = [str(label.content) for label in app.query(Label)]
+
+    assert any("Contribution Packets" in label for label in labels)
 
 
 @pytest.mark.asyncio

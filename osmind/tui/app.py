@@ -3,12 +3,14 @@ from pathlib import Path
 import sys
 
 from textual.app import App, ComposeResult
-from textual.widgets import Header, Footer, TabbedContent, TabPane
+from textual.css.query import NoMatches
+from textual.widgets import DataTable, Footer, Header, Input, TabbedContent, TabPane
 
 from osmind.config import Config
 from osmind.tui.screens.discover import DiscoverScreen
 from osmind.tui.screens.packs import PacksScreen
 from osmind.tui.screens.review import ReviewScreen
+from osmind.tui.widgets.issue_list import IssueTable
 
 
 class OsmindApp(App):
@@ -19,6 +21,7 @@ class OsmindApp(App):
         ("d", "switch_tab('discover')", "Discover"),
         ("p", "switch_tab('packs')", "Packs"),
         ("r", "switch_tab('review')", "Review"),
+        ("escape", "leave_input", "Back"),
         ("q", "quit", "Quit"),
     ]
 
@@ -39,12 +42,46 @@ class OsmindApp(App):
 
     def action_switch_tab(self, tab: str) -> None:
         self.query_one(TabbedContent).active = tab
+        self._focus_active_tab_after_refresh(tab)
+
+    def action_leave_input(self) -> None:
+        if not isinstance(self.focused, Input):
+            return
+
+        active_tab = self.query_one(TabbedContent).active
+        if active_tab == "discover":
+            self.query_one(IssueTable).focus()
+        elif active_tab == "packs":
+            self.query_one("#packs-table", DataTable).focus()
+        elif active_tab == "review":
+            self.query_one("#notes-table", DataTable).focus()
+        else:
+            self.set_focus(None)
 
     def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
-        if event.pane.id == "packs":
-            self.query_one(PacksScreen).action_reload()
-        elif event.pane.id == "review":
-            self.query_one(ReviewScreen).action_reload()
+        if event.pane.id:
+            self.call_after_refresh(lambda: self._activate_tab(event.pane.id))
+
+    def _activate_tab(self, tab: str) -> None:
+        try:
+            if tab == "packs":
+                self.query_one(PacksScreen).action_reload()
+            elif tab == "review":
+                self.query_one(ReviewScreen).action_reload()
+            self._focus_active_tab(tab)
+        except NoMatches:
+            return
+
+    def _focus_active_tab_after_refresh(self, tab: str) -> None:
+        self.call_after_refresh(lambda: self._focus_active_tab(tab))
+
+    def _focus_active_tab(self, tab: str) -> None:
+        if tab == "discover":
+            self.query_one(IssueTable).focus()
+        elif tab == "packs":
+            self.query_one("#packs-table", DataTable).focus()
+        elif tab == "review":
+            self.query_one("#notes-table", DataTable).focus()
 
 
 def main():

@@ -43,7 +43,7 @@ class PackLibrary:
     ) -> Path:
         if path.exists():
             existing_markdown = path.read_text(encoding="utf-8")
-            _preserve_status_and_confidence(pack, existing_markdown)
+            _preserve_user_frontmatter(pack, existing_markdown)
         else:
             existing_markdown = ""
         markdown = _preserve_notes_section(render_pack(pack), existing_markdown)
@@ -57,6 +57,7 @@ class PackLibrary:
             pack.status,
             pack.confidence,
             pack.source.updated_at,
+            decision=pack.decision,
         )
         return path
 
@@ -92,12 +93,15 @@ def _slug(value: str) -> str:
     return slug[:MAX_SLUG_LENGTH].rstrip("-") or "untitled"
 
 
-def _preserve_status_and_confidence(pack, existing_markdown: str) -> None:
+def _preserve_user_frontmatter(pack, existing_markdown: str) -> None:
     frontmatter = _read_frontmatter(existing_markdown)
     status = frontmatter.get("status")
+    decision = frontmatter.get("decision")
     confidence = frontmatter.get("confidence")
     if status:
         pack.status = str(status)
+    if decision:
+        pack.decision = str(decision)
     if confidence:
         pack.confidence = str(confidence)
 

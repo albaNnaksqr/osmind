@@ -8,18 +8,19 @@ from textual.widgets import DataTable, Label
 
 from osmind.packs.opener import open_path
 from osmind.services.library import PackLibrary
+from osmind.tui.suspend import suspend_if_supported
 
 
 class PacksScreen(Vertical):
     BINDINGS = [
-        ("o", "open_pack", "Open Pack"),
-        ("r", "reload", "Reload"),
+        ("o", "open_pack", "Open Packet"),
+        ("u", "reload", "Reload"),
     ]
 
     def compose(self) -> ComposeResult:
-        yield Label("[bold]Learning Packs[/bold]", markup=True)
+        yield Label("[bold]Contribution Packets[/bold]", markup=True)
         yield DataTable(id="packs-table", cursor_type="row")
-        yield Label("[dim]o: open  r: reload[/dim]", markup=True)
+        yield Label("[dim]o: open  u: reload  r: review[/dim]", markup=True)
 
     def on_mount(self) -> None:
         table = self.query_one("#packs-table", DataTable)
@@ -28,6 +29,7 @@ class PacksScreen(Vertical):
             ("#", "number"),
             ("Repo", "repo"),
             ("Status", "status"),
+            ("Decision", "decision"),
             ("Confidence", "confidence"),
             ("Path", "path"),
         )
@@ -48,6 +50,7 @@ class PacksScreen(Vertical):
                 str(pack["number"]),
                 pack["repo"],
                 pack["status"],
+                pack.get("decision", "undecided"),
                 pack["confidence"],
                 pack["path"],
                 key=str(idx),
@@ -66,4 +69,5 @@ class PacksScreen(Vertical):
         if pack is None:
             self.notify("No pack selected", severity="warning")
             return
-        open_path(Path(pack["path"]))
+        with suspend_if_supported(self.app):
+            open_path(Path(pack["path"]))

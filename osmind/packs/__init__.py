@@ -1,1 +1,1 @@
-"""Learning Pack generation and rendering."""
+"""Contribution Packet generation and rendering."""

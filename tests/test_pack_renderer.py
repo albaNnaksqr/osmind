@@ -35,13 +35,14 @@ def test_render_pack_includes_frontmatter_and_sections():
     rendered = render_pack(pack)
     frontmatter = _frontmatter(rendered)
 
-    assert frontmatter["type"] == "osmind-learning-pack"
+    assert frontmatter["type"] == "osmind-contribution-packet"
     assert frontmatter["source_type"] == "pr"
     assert frontmatter["repo"] == "o/r"
     assert frontmatter["number"] == 7
     assert frontmatter["title"] == "Refactor runner"
     assert frontmatter["url"] == "https://github.com/o/r/pull/7"
     assert frontmatter["status"] == "unread"
+    assert frontmatter["decision"] == "undecided"
     assert frontmatter["confidence"] == "unknown"
     assert frontmatter["source_updated_at"] == "2026-05-15T01:02:03+00:00"
     assert frontmatter["modules"] == ["src"]
@@ -69,6 +70,7 @@ def test_render_pack_uses_issue_heading_and_default_tags():
     frontmatter = _frontmatter(rendered)
 
     assert frontmatter["status"] == "unread"
+    assert frontmatter["decision"] == "undecided"
     assert frontmatter["confidence"] == "unknown"
     assert frontmatter["modules"] == []
     assert frontmatter["tags"] == ["osmind", "open-source"]
@@ -76,15 +78,16 @@ def test_render_pack_uses_issue_heading_and_default_tags():
     assert "## Context\n\nMemory grows under load." in rendered
 
 
-def test_parse_pack_frontmatter_reads_status_and_confidence():
+def test_parse_pack_frontmatter_reads_status_decision_and_confidence():
     text = """---
-type: osmind-learning-pack
+type: osmind-contribution-packet
 source_type: pr
 repo: o/r
 number: 7
 title: Refactor runner
 url: https://github.com/o/r/pull/7
 status: reading
+decision: continue
 confidence: low
 generated_at: 2026-05-15
 source_updated_at: u1
@@ -98,4 +101,30 @@ tags: []
     data = parse_pack_frontmatter(text)
 
     assert data["status"] == "reading"
+    assert data["decision"] == "continue"
     assert data["confidence"] == "low"
+
+
+def test_parse_pack_frontmatter_accepts_legacy_learning_pack_type():
+    text = """---
+type: osmind-learning-pack
+source_type: issue
+repo: o/r
+number: 42
+title: Tokenizer leak
+url: https://github.com/o/r/issues/42
+status: reading
+confidence: low
+generated_at: 2026-05-15
+source_updated_at: u1
+modules: []
+tags: []
+---
+
+# Issue #42: Tokenizer leak
+"""
+
+    data = parse_pack_frontmatter(text)
+
+    assert data["type"] == "osmind-learning-pack"
+    assert data["status"] == "reading"

@@ -10,9 +10,9 @@ def _iso(dt) -> str:
 class GitHubClient:
     def __init__(self, token: str):
         if token:
-            self._gh = Github(token)
+            self._gh = Github(token, timeout=10, retry=0)
         else:
-            self._gh = Github()  # unauthenticated: public repos, 60 req/hr
+            self._gh = Github(timeout=10, retry=0)  # unauthenticated: public repos, 60 req/hr
 
     def get_issues(
         self,
@@ -26,6 +26,8 @@ class GitHubClient:
         for i in r.get_issues(state=state):
             if len(issues) >= limit:
                 break
+            if getattr(i, "pull_request", None):
+                continue
             comments = []
             if include_comments:
                 for c in i.get_comments():

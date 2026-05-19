@@ -1,8 +1,8 @@
 # osmind
 
-**osmind** is a local-first Learning Pack generator for developers who want to understand and contribute to open-source projects.
+**osmind** is a local-first Contribution Packet generator for developers who want to understand and contribute to open-source projects.
 
-It watches GitHub repositories you care about, recommends PRs and issues that match your interests, and turns selected items into Markdown Learning Packs in your Obsidian vault. Each pack gives you a reading path, key files, questions, and an optional Codex or Claude prompt so learning can compound over time.
+It watches GitHub repositories you care about, recommends PRs and issues that match your interests, and turns selected items into Markdown Contribution Packets. Each packet gives you recommendation evidence, continue/stop criteria, a first inspection path, key files, validation hints, and an optional Codex or Claude prompt.
 
 ```
 ┌─ osmind ─────────────────────────────────────────────────────┐
@@ -25,7 +25,7 @@ Most large open source projects are hard to enter — the roadmap is dense, ever
 
 osmind solves this by:
 - **Matching issues to your profile** — it knows your skills and interests, scores every open issue, and surfaces the ones you're most likely to be able to work on
-- **Generating durable Learning Packs** — selected issues and PRs become Markdown files with context, reading paths, key files, questions, and suggested next actions
+- **Generating durable Contribution Packets** — selected issues and PRs become Markdown files with context, recommendation evidence, continue/stop criteria, key files, validation hints, and suggested next actions
 - **Building a knowledge base** — packs accumulate in your Obsidian vault, linked to repos and modules; over time you build a real mental model of the codebase
 
 ## Workflow
@@ -33,8 +33,8 @@ osmind solves this by:
 1. Configure watched repositories in `profile.yaml`.
 2. Run `osmind`.
 3. Use Discover to refresh issues and choose an item.
-4. Press `g` to generate a Learning Pack.
-5. Press `o` to open the pack in your editor or Obsidian.
+4. Press `g` to generate a Contribution Packet.
+5. Press `o` to open the packet in your editor or Obsidian.
 6. Read the pack alongside GitHub or a local checkout.
 7. Use Packs and Review to revisit generated material.
 
@@ -46,15 +46,15 @@ osmind has three modes:
 
 Fetches open issues from your watched repos. Each issue is scored against your `profile.yaml` (interests, skills, available compute) by a local or remote LLM. Results are sorted by match score with a one-sentence explanation of why each issue fits you.
 
-Press `g` on an issue to generate a Learning Pack, or `o` to open an existing pack for the selected issue. Press `c` or `x` to launch **Claude Code** or **Codex** directly with the issue context pre-loaded.
+Press `g` on an issue to generate a Contribution Packet, or `o` to open an existing packet for the selected issue. Press `c` or `x` to launch **Claude Code** or **Codex** directly with the issue context pre-loaded.
 
 ### Packs
 
-Lists generated Learning Packs from the local SQLite cache. You can open packs, inspect their status and confidence, and regenerate material when the source item changes.
+Lists generated Contribution Packets from the local SQLite cache. You can open packets, inspect their status, decision, and confidence, and regenerate material when the source item changes.
 
 ### Review
 
-osmind reads generated Learning Packs and asks Socratic review questions. Your answers are appended back into the pack's `## Notes` section so the Markdown file remains the durable learning record.
+osmind reads generated Contribution Packets and asks Socratic review questions. Your answers are appended back into the packet's `## Notes` section so the Markdown file remains the durable learning record.
 
 ## Installation
 
@@ -144,8 +144,8 @@ For the ranking and Socratic use case, a 7B–27B local model is sufficient.
 | `p` | Packs tab |
 | `r` | Review tab |
 | `f` | Fetch issues (Discover) |
-| `g` | Generate Learning Pack for selected issue (Discover) |
-| `o` | Open Learning Pack for selected issue or selected pack |
+| `g` | Generate Contribution Packet for selected issue (Discover) |
+| `o` | Open Contribution Packet for selected issue or selected packet |
 | `c` | Launch Claude Code on selected issue |
 | `x` | Launch Codex on selected issue |
 | `q` | Quit |
@@ -155,4 +155,4 @@ For the ranking and Socratic use case, a 7B–27B local model is sufficient.
 - [Textual](https://github.com/Textualize/textual) — terminal UI framework
 - [PyGithub](https://github.com/PyGithub/PyGithub) — GitHub API
 - [openai](https://github.com/openai/openai-python) — LLM client (OpenAI-compatible)
-- Learning Packs stored as plain Markdown with YAML frontmatter — no new tools required if you already use Obsidian
+- Contribution Packets stored as plain Markdown with YAML frontmatter — no new tools required if you already use Obsidian

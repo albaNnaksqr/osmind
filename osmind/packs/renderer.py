@@ -6,6 +6,9 @@ import yaml
 
 from osmind.packs.models import LearningPack
 
+PACK_TYPE = "osmind-contribution-packet"
+LEGACY_PACK_TYPE = "osmind-learning-pack"
+
 
 def _heading(pack: LearningPack) -> str:
     label = "PR" if pack.source.source_type == "pr" else "Issue"
@@ -14,13 +17,14 @@ def _heading(pack: LearningPack) -> str:
 
 def render_pack(pack: LearningPack) -> str:
     frontmatter = {
-        "type": "osmind-learning-pack",
+        "type": PACK_TYPE,
         "source_type": pack.source.source_type,
         "repo": pack.source.repo,
         "number": pack.source.number,
         "title": pack.source.title,
         "url": pack.source.url,
         "status": pack.status,
+        "decision": pack.decision,
         "confidence": pack.confidence,
         "generated_at": str(date.today()),
         "source_updated_at": pack.source.updated_at,
@@ -53,6 +57,6 @@ def parse_pack_frontmatter(text: str) -> dict:
         raise ValueError("Pack is missing YAML frontmatter") from exc
 
     data = yaml.safe_load(raw) or {}
-    if not isinstance(data, dict) or data.get("type") != "osmind-learning-pack":
-        raise ValueError("Not an osmind Learning Pack")
+    if not isinstance(data, dict) or data.get("type") not in {PACK_TYPE, LEGACY_PACK_TYPE}:
+        raise ValueError("Not an osmind Contribution Packet")
     return data

@@ -1,1 +1,1 @@
-"""Persistent cache for GitHub item and Learning Pack metadata."""
+"""Persistent cache for GitHub item and Contribution Packet metadata."""

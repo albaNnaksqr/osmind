@@ -16,14 +16,15 @@ def _star(score: float) -> str:
 class IssueTable(DataTable):
     def populate(self, issues: list[GHIssue]) -> None:
         self.clear(columns=True)
-        self.add_columns("Score", "#", "Title", "Labels")
-        for issue in issues:
+        self.add_columns("Score", "#", "Title", "Labels", "Reason")
+        for issue in sorted(issues, key=lambda item: item.score, reverse=True):
             labels = ", ".join(issue.labels[:3])
             self.add_row(
                 _star(issue.score),
                 str(issue.number),
                 issue.title[:60],
                 labels,
+                issue.reason[:80],
                 key=str(issue.number),
             )
 

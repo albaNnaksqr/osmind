@@ -13,6 +13,13 @@ def client():
         return c
 
 
+def test_client_disables_long_github_backoff():
+    with patch("osmind.github.client.Github") as mock_gh:
+        GitHubClient(token="fake-token")
+
+    mock_gh.assert_called_once_with("fake-token", timeout=10, retry=0)
+
+
 def _make_mock_issue():
     m = MagicMock()
     m.number = 42
@@ -23,6 +30,7 @@ def _make_mock_issue():
     m.state = "open"
     m.updated_at = datetime(2026, 5, 15, 1, 2, 3, tzinfo=timezone.utc)
     m.get_comments.return_value = []
+    m.pull_request = None
     return m
 
 
@@ -85,6 +93,23 @@ def test_get_issues_include_comments_fetches_up_to_five_comments(client):
     assert issues[0].comments[0].url.endswith("#issuecomment-1")
     assert issues[0].comments[0].created_at == "2026-05-15T02:03:04+00:00"
     mock_issue.get_comments.assert_called_once_with()
+
+
+def test_get_issues_filters_pull_requests_from_issue_feed(client):
+    issue = _make_mock_issue()
+    pull_request_item = _make_mock_issue()
+    pull_request_item.number = 99
+    pull_request_item.title = "Already implemented"
+    pull_request_item.html_url = "https://github.com/sgl-project/sglang/pull/99"
+    pull_request_item.pull_request = MagicMock()
+
+    mock_repo = MagicMock()
+    mock_repo.get_issues.return_value = [pull_request_item, issue]
+    client._gh.get_repo.return_value = mock_repo
+
+    issues = client.get_issues("sgl-project/sglang", state="open", limit=10)
+
+    assert [item.number for item in issues] == [42]
 
 
 def test_get_pr_with_files(client):

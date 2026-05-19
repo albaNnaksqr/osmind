@@ -7,15 +7,17 @@ from osmind.packs.models import LearningPack, PackSection, SourceRef
 DIFF_SNIPPET_MAX_CHARS = 4000
 
 REQUIRED_PR_SECTIONS = [
-    "Why This Is Worth Reading",
+    "What This Is",
+    "Why It May Fit You",
+    "Continue Or Stop Criteria",
+    "First 10 Minutes",
+    "Files And Symbols To Inspect",
+    "Validation Path",
     "What Changed",
-    "Files To Read First",
     "Diff Map",
-    "Reading Path",
-    "Socratic Questions",
     "Agent Exploration Prompt",
-    "If You Want To Contribute Next",
-    "Review Later",
+    "Follow-Up Contribution Ideas",
+    "Decision Log",
     "Notes",
 ]
 
@@ -33,18 +35,17 @@ class PackGenerator:
         )
         files = pr.files or []
         sections = [
-            PackSection(
-                "Why This Is Worth Reading",
-                _why_this_is_worth_reading(pr),
-            ),
+            PackSection("What This Is", _pr_what_this_is(pr)),
+            PackSection("Why It May Fit You", _why_this_is_worth_reading(pr)),
+            PackSection("Continue Or Stop Criteria", _pr_continue_stop_criteria(files)),
+            PackSection("First 10 Minutes", _pr_first_ten_minutes(files)),
+            PackSection("Files And Symbols To Inspect", _files_to_read_first(files)),
+            PackSection("Validation Path", _pr_validation_path(files)),
             PackSection("What Changed", _what_changed(pr)),
-            PackSection("Files To Read First", _files_to_read_first(files)),
             PackSection("Diff Map", _diff_map(files)),
-            PackSection("Reading Path", _reading_path(files)),
-            PackSection("Socratic Questions", _socratic_questions(pr)),
             PackSection("Agent Exploration Prompt", _agent_exploration_prompt(pr)),
-            PackSection("If You Want To Contribute Next", _contribute_next(pr)),
-            PackSection("Review Later", _review_later(files)),
+            PackSection("Follow-Up Contribution Ideas", _contribute_next(pr)),
+            PackSection("Decision Log", _decision_log()),
             PackSection("Notes", ""),
         ]
         return LearningPack(
@@ -64,14 +65,18 @@ class PackGenerator:
             updated_at=issue.updated_at,
         )
         sections = [
-            PackSection("Why This May Fit You", _why_issue_may_fit(issue)),
-            PackSection("What Is Known", _issue_known_context(issue)),
+            PackSection("What This Is", _issue_what_this_is(issue)),
+            PackSection("Why It May Fit You", _why_issue_may_fit(issue)),
+            PackSection("Continue Or Stop Criteria", _issue_continue_stop_criteria(issue)),
+            PackSection("First 10 Minutes", _issue_first_ten_minutes(issue)),
+            PackSection("Files And Symbols To Inspect", _issue_search_targets(issue)),
+            PackSection("Validation Path", _issue_validation_path(issue)),
+            PackSection("Known Facts", _issue_known_context(issue)),
             PackSection("Missing Context", _issue_missing_context(issue)),
-            PackSection("Investigation Path", _issue_investigation_path()),
-            PackSection("Files Or Symbols To Search", _issue_search_targets(issue)),
+            PackSection("Reproduction Hypothesis", _issue_reproduction_hypothesis(issue)),
+            PackSection("Maintainer Signals", _issue_maintainer_signals(issue)),
             PackSection("Agent Exploration Prompt", _issue_agent_prompt(issue)),
-            PackSection("Human Checkpoints", _issue_human_checkpoints()),
-            PackSection("Learning Questions", _issue_learning_questions()),
+            PackSection("Decision Log", _decision_log()),
             PackSection("Notes", ""),
         ]
         return LearningPack(source=source, modules=[], sections=sections)
@@ -98,6 +103,18 @@ def _file_summary(file: PRFile) -> str:
     return f"`{file.filename}`{suffix}"
 
 
+def _pr_what_this_is(pr: GHPR) -> str:
+    changed_count = len(pr.files or [])
+    body = (pr.body or "").strip()
+    summary = (
+        f"PR #{pr.number} in `{pr.repo}` is titled \"{pr.title}\" and changes "
+        f"{changed_count} file{'' if changed_count == 1 else 's'}."
+    )
+    if body:
+        return f"{summary}\n\nSource description:\n\n{body}"
+    return f"{summary}\n\nNo PR description was included in the fetched metadata."
+
+
 def _why_this_is_worth_reading(pr: GHPR) -> str:
     changed_count = len(pr.files or [])
     body = (pr.body or "").strip()
@@ -108,6 +125,63 @@ def _why_this_is_worth_reading(pr: GHPR) -> str:
     if body:
         parts.append(body)
     return "\n\n".join(parts)
+
+
+def _pr_continue_stop_criteria(files: list[PRFile]) -> str:
+    test_files = [file.filename for file in files if "test" in file.filename.lower()]
+    continue_lines = [
+        "Continue if the changed files map to modules you want to understand.",
+        "Continue if you can explain the intent after reading the PR description and first changed file.",
+    ]
+    if test_files:
+        continue_lines.append(f"Continue if `{test_files[0]}` gives a concrete validation path.")
+    stop_lines = [
+        "Stop if the diff depends on project context you cannot recover in a short reading session.",
+        "Stop if there is no clear behavior, test, or design question to carry forward.",
+    ]
+    return "\n".join(
+        ["### Continue", *[f"- {line}" for line in continue_lines], "", "### Stop", *[f"- {line}" for line in stop_lines]]
+    )
+
+
+def _pr_first_ten_minutes(files: list[PRFile]) -> str:
+    if not files:
+        return "\n".join(
+            [
+                "1. Read the PR title and description.",
+                "2. Open the GitHub conversation for maintainer context.",
+                "3. Decide whether to fetch file metadata before spending more time.",
+            ]
+        )
+    first = files[0].filename
+    lines = [
+        "1. Read the PR description and restate the intended behavior change.",
+        f"2. Read `{first}` first and identify the main code path.",
+    ]
+    if len(files) > 1:
+        lines.append("3. Skim the remaining changed files to separate behavior, tests, and documentation.")
+    else:
+        lines.append("3. Check whether this single-file change needs tests or docs.")
+    return "\n".join(lines)
+
+
+def _pr_validation_path(files: list[PRFile]) -> str:
+    test_files = [file for file in files if "test" in file.filename.lower()]
+    if test_files:
+        return "\n".join(
+            [
+                f"- Start from {_file_summary(test_files[0])}.",
+                "- Identify the command the project uses to run that test file.",
+                "- Use the test behavior as the evidence for whether this PR is safe to learn from or extend.",
+            ]
+        )
+    return "\n".join(
+        [
+            "- No obvious test file was included in the fetched PR metadata.",
+            "- Search the repository for tests around the first changed module.",
+            "- Treat the packet as low confidence until you identify a validation command or review discussion.",
+        ]
+    )
 
 
 def _what_changed(pr: GHPR) -> str:
@@ -203,13 +277,84 @@ def _review_later(files: list[PRFile]) -> str:
     return "\n".join(f"- {_file_summary(file)}" for file in files[:5])
 
 
+def _decision_log() -> str:
+    return "- Decision: undecided\n- Reason:\n- Next check:"
+
+
+def _issue_what_this_is(issue: GHIssue) -> str:
+    body = (issue.body or "").strip()
+    summary = f"Issue #{issue.number} in `{issue.repo}` is titled \"{issue.title}\"."
+    if body:
+        return f"{summary}\n\nSource report:\n\n{body}"
+    return f"{summary}\n\nThe issue body is empty, so this packet starts with low confidence."
+
+
 def _why_issue_may_fit(issue: GHIssue) -> str:
     labels = ", ".join(issue.labels) if issue.labels else "none"
-    return (
-        f"Issue #{issue.number}: {issue.title}\n\n"
-        f"Labels: {labels}\n\n"
+    parts = [
+        f"Issue #{issue.number}: {issue.title}",
+        f"Labels: {labels}",
+    ]
+    if issue.reason:
+        parts.append(f"推荐理由: {issue.reason}")
+    parts.append(
         "Use this issue to judge whether the problem is understandable, scoped, "
         "and worth deeper exploration before attempting a contribution."
+    )
+    return "\n\n".join(parts)
+
+
+def _issue_continue_stop_criteria(issue: GHIssue) -> str:
+    body = (issue.body or "").lower()
+    labels = {label.lower() for label in issue.labels}
+    has_repro_hint = any(word in body for word in ("reproduce", "repro", "steps", "error", "traceback", "stack"))
+    has_help_label = bool(labels & {"good first issue", "help wanted", "bug"})
+    continue_lines = [
+        "Continue if you can restate the problem without copying the issue text.",
+        "Continue if repository search points to one likely module or symbol.",
+    ]
+    if has_repro_hint:
+        continue_lines.append("Continue if the report's reproduction or error details can be turned into a validation check.")
+    if has_help_label:
+        continue_lines.append("Continue because the labels suggest maintainers may accept external help.")
+    stop_lines = [
+        "Stop if the issue lacks reproduction details and no maintainer comment narrows the scope.",
+        "Stop if you cannot identify evidence that would prove a fix worked.",
+    ]
+    return "\n".join(
+        ["### Continue", *[f"- {line}" for line in continue_lines], "", "### Stop", *[f"- {line}" for line in stop_lines]]
+    )
+
+
+def _issue_first_ten_minutes(issue: GHIssue) -> str:
+    targets = _issue_search_terms(issue)
+    first_target = targets[0] if targets else issue.title
+    return "\n".join(
+        [
+            "1. Reproduce or restate the report in one sentence.",
+            f"2. Search the repository for `{first_target}` and nearby module names.",
+            "3. Find the smallest file or test that could validate the behavior.",
+            "4. Decide continue/defer/discard before attempting implementation.",
+        ]
+    )
+
+
+def _issue_validation_path(issue: GHIssue) -> str:
+    body = (issue.body or "").lower()
+    if any(word in body for word in ("test", "pytest", "unittest", "regression")):
+        return "\n".join(
+            [
+                "- The issue text mentions tests or regression evidence.",
+                "- Search for the named test path or nearby module tests.",
+                "- Prefer writing or running the smallest failing validation before implementation.",
+            ]
+        )
+    return "\n".join(
+        [
+            "- No concrete test command was detected in the fetched issue text.",
+            "- Search for existing tests around the title terms and labels.",
+            "- If no validation path appears in 10 minutes, defer or ask an agent to investigate first.",
+        ]
     )
 
 
@@ -243,13 +388,38 @@ def _issue_investigation_path() -> str:
 
 
 def _issue_search_targets(issue: GHIssue) -> str:
-    title_words = [word.strip(".,:;()[]{}").lower() for word in issue.title.split()]
-    title_words = [word for word in title_words if len(word) > 3]
-    targets = title_words[:6]
+    targets = _issue_search_terms(issue)
     lines = [f"- `{target}`" for target in targets]
     if issue.labels:
         lines.append(f"- Labels: {', '.join(issue.labels)}")
     return "\n".join(lines) if lines else "- Search exact phrases from the issue title and body."
+
+
+def _issue_search_terms(issue: GHIssue) -> list[str]:
+    title_words = [word.strip(".,:;()[]{}").lower() for word in issue.title.split()]
+    return [word for word in title_words if len(word) > 3][:6]
+
+
+def _issue_reproduction_hypothesis(issue: GHIssue) -> str:
+    if not (issue.body or "").strip():
+        return "No reproduction hypothesis yet; the issue body is empty."
+    return (
+        "Initial hypothesis: the behavior described in the issue can be reproduced or validated "
+        "by following exact terms from the report, then narrowing to the smallest affected module."
+    )
+
+
+def _issue_maintainer_signals(issue: GHIssue) -> str:
+    signals: list[str] = []
+    if issue.labels:
+        signals.append(f"- Labels: {', '.join(issue.labels)}")
+    for comment in issue.comments[:3]:
+        author = comment.author or "unknown"
+        body = " ".join((comment.body or "").split())
+        if len(body) > 180:
+            body = f"{body[:180].rstrip()}..."
+        signals.append(f"- {author}: {body}")
+    return "\n".join(signals) if signals else "- No cached labels or maintainer comments beyond the issue body."
 
 
 def _issue_agent_prompt(issue: GHIssue) -> str:

@@ -53,23 +53,27 @@ def test_from_pr_includes_required_sections_and_changed_file_details():
     sections = {section.title: section.body for section in pack.sections}
 
     assert list(sections) == [
-        "Why This Is Worth Reading",
+        "What This Is",
+        "Why It May Fit You",
+        "Continue Or Stop Criteria",
+        "First 10 Minutes",
+        "Files And Symbols To Inspect",
+        "Validation Path",
         "What Changed",
-        "Files To Read First",
         "Diff Map",
-        "Reading Path",
-        "Socratic Questions",
         "Agent Exploration Prompt",
-        "If You Want To Contribute Next",
-        "Review Later",
+        "Follow-Up Contribution Ideas",
+        "Decision Log",
         "Notes",
     ]
-    assert "src/runner.py" in sections["Files To Read First"]
-    assert "modified" in sections["Files To Read First"]
-    assert "+2/-1" in sections["Files To Read First"]
-    assert "tests/test_runner.py" in sections["Files To Read First"]
-    assert "added" in sections["Files To Read First"]
-    assert "+8/-0" in sections["Files To Read First"]
+    assert "src/runner.py" in sections["Files And Symbols To Inspect"]
+    assert "modified" in sections["Files And Symbols To Inspect"]
+    assert "+2/-1" in sections["Files And Symbols To Inspect"]
+    assert "tests/test_runner.py" in sections["Files And Symbols To Inspect"]
+    assert "added" in sections["Files And Symbols To Inspect"]
+    assert "+8/-0" in sections["Files And Symbols To Inspect"]
+    assert "Continue" in sections["Continue Or Stop Criteria"]
+    assert "Stop" in sections["Continue Or Stop Criteria"]
 
 
 def test_from_pr_diff_map_includes_up_to_first_eight_file_snippets_and_missing_patch_text():
@@ -178,24 +182,47 @@ def test_from_issue_includes_required_sections_and_issue_context():
     assert pack.source.url == "https://github.com/o/r/issues/42"
     assert pack.source.updated_at == "2026-05-16T01:02:03+00:00"
     assert list(sections) == [
-        "Why This May Fit You",
-        "What Is Known",
+        "What This Is",
+        "Why It May Fit You",
+        "Continue Or Stop Criteria",
+        "First 10 Minutes",
+        "Files And Symbols To Inspect",
+        "Validation Path",
+        "Known Facts",
         "Missing Context",
-        "Investigation Path",
-        "Files Or Symbols To Search",
+        "Reproduction Hypothesis",
+        "Maintainer Signals",
         "Agent Exploration Prompt",
-        "Human Checkpoints",
-        "Learning Questions",
+        "Decision Log",
         "Notes",
     ]
-    assert "Tokenizer leak" in sections["Why This May Fit You"]
-    assert "bug, tokenizer" in sections["Why This May Fit You"]
-    assert "Long sequences leak memory." in sections["What Is Known"]
+    assert "Tokenizer leak" in sections["Why It May Fit You"]
+    assert "bug, tokenizer" in sections["Why It May Fit You"]
+    assert "Long sequences leak memory." in sections["Known Facts"]
     assert "maintainer" in sections["Missing Context"]
     assert "tokenizer cache" in sections["Missing Context"]
-    assert "reproduce" in sections["Investigation Path"].lower()
-    assert "Human Checkpoints" in sections
+    assert "reproduce" in sections["First 10 Minutes"].lower()
+    assert "Continue" in sections["Continue Or Stop Criteria"]
+    assert "Stop" in sections["Continue Or Stop Criteria"]
     assert "issue #42" in sections["Agent Exploration Prompt"].lower()
     assert "o/r" in sections["Agent Exploration Prompt"]
     assert "Tokenizer leak" in sections["Agent Exploration Prompt"]
     assert "Do not implement" in sections["Agent Exploration Prompt"]
+
+
+def test_from_issue_uses_discover_recommendation_reason_in_fit_section():
+    issue = GHIssue(
+        number=42,
+        title="Tokenizer leak",
+        body="Body",
+        labels=["bug"],
+        url="https://github.com/o/r/issues/42",
+        repo="o/r",
+        state="open",
+        reason="涉及 tokenizer cache，与用户的推理优化兴趣高度相关。",
+    )
+
+    pack = PackGenerator().from_issue(issue)
+    sections = {section.title: section.body for section in pack.sections}
+
+    assert "涉及 tokenizer cache" in sections["Why It May Fit You"]

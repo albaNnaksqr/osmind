@@ -65,6 +65,7 @@ def test_write_pr_pack_creates_markdown_and_cache_record(tmp_path):
             "number": 42,
             "path": str(path),
             "status": "unread",
+            "decision": "undecided",
             "confidence": "unknown",
             "source_updated_at": "2026-05-15T01:02:03+00:00",
             "generated_at": packs[0]["generated_at"],
@@ -87,6 +88,7 @@ number: 42
 title: Add Learning Pack Writer!
 url: https://github.com/openai/osmind/pull/42
 status: reviewed
+decision: continue
 confidence: high
 generated_at: '2026-05-15'
 source_updated_at: '2026-05-15T01:02:03+00:00'
@@ -117,6 +119,7 @@ Keep everything after notes too.
 
     markdown = path.read_text(encoding="utf-8")
     assert "status: reviewed" in markdown
+    assert "decision: continue" in markdown
     assert "confidence: high" in markdown
     assert "Old generated content." not in markdown
     assert "Stores generated packs in the notes vault." in markdown
@@ -137,6 +140,7 @@ number: 42
 title: Original Title
 url: https://github.com/openai/osmind/pull/42
 status: reviewed
+decision: defer
 confidence: high
 generated_at: '2026-05-15'
 source_updated_at: '2026-05-15T01:02:03+00:00'
@@ -167,12 +171,14 @@ Retitle should not move this note.
     assert "# PR #42: Retitled Pack" in markdown
     assert "title: Retitled Pack" in markdown
     assert "status: reviewed" in markdown
+    assert "decision: defer" in markdown
     assert "confidence: high" in markdown
     assert "Old generated content." not in markdown
     assert "## Notes\n\nRetitle should not move this note." in markdown
     packs = library.list_packs()
     assert packs[0]["path"] == str(original_path)
     assert packs[0]["status"] == "reviewed"
+    assert packs[0]["decision"] == "defer"
     assert packs[0]["confidence"] == "high"
 
 
@@ -217,6 +223,7 @@ def test_write_issue_pack_creates_markdown_and_cache_record(tmp_path):
     assert packs[0]["number"] == 7
     assert packs[0]["path"] == str(path)
     assert packs[0]["status"] == "unread"
+    assert packs[0]["decision"] == "undecided"
     assert packs[0]["confidence"] == "unknown"
 
 
@@ -234,6 +241,7 @@ number: 7
 title: Original Issue
 url: https://github.com/openai/osmind/issues/7
 status: reviewed
+decision: discard
 confidence: high
 generated_at: '2026-05-15'
 source_updated_at: '2026-05-15T01:02:03+00:00'
@@ -263,6 +271,7 @@ Keep this issue note.
     assert "# Issue #7: Retitled Issue" in markdown
     assert "title: Retitled Issue" in markdown
     assert "status: reviewed" in markdown
+    assert "decision: discard" in markdown
     assert "confidence: high" in markdown
     assert "Old generated content." not in markdown
     assert "## Notes\n\nKeep this issue note." in markdown
@@ -304,16 +313,18 @@ def test_open_path_splits_command_args(monkeypatch, tmp_path):
 
     open_path(path, command="code --wait")
 
-    assert calls == [(["code", "--wait", str(path)], False)]
+    assert calls == [(["code", "--wait", str(path)], True)]
 
 
-def test_open_path_ignores_empty_editor(monkeypatch, tmp_path):
+def test_open_path_uses_terminal_pager_when_editor_is_unset(monkeypatch, tmp_path):
     calls = []
     path = tmp_path / "pack.md"
 
+    monkeypatch.delenv("VISUAL", raising=False)
     monkeypatch.setenv("EDITOR", "")
+    monkeypatch.setattr("shutil.which", lambda command: "/usr/bin/less" if command == "less" else None)
     monkeypatch.setattr("subprocess.run", lambda args, check: calls.append((args, check)))
 
     open_path(path)
 
-    assert calls == [(["xdg-open", str(path)], False)]
+    assert calls == [(["less", str(path)], True)]
