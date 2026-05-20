@@ -5,28 +5,40 @@ from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.widgets import DataTable, Label
+from textual.widgets import DataTable, Label, Static
 
 from osmind.logs import log_exception
 from osmind.packs.opener import open_path
 from osmind.services.library import PackLibrary
 from osmind.tui.lifecycle import resources_hash
 from osmind.tui.suspend import suspend_if_supported
+from osmind.tui.workflow import format_start_work_from_packet
 
 
 class PacksScreen(Vertical):
+    DEFAULT_CSS = """
+    PacksScreen #packs-list-view { height: 1fr; }
+    PacksScreen #pack-start-work-view { display: none; height: 1fr; }
+    PacksScreen #pack-start-work-panel { height: 1fr; padding: 0 1; overflow-y: auto; }
+    """
     BINDINGS = [
         ("o", "open_pack", "Open Packet"),
+        ("w", "start_work", "Start Work"),
         ("y", "mark_continue", "Continue"),
         ("l", "mark_defer", "Defer"),
         ("n", "mark_discard", "Discard"),
         ("u", "reload", "Reload"),
+        ("escape", "back_to_list", "Back"),
     ]
 
     def compose(self) -> ComposeResult:
-        yield Label("[bold]Contribution Packets[/bold]", markup=True)
-        yield DataTable(id="packs-table", cursor_type="row")
-        yield Label("[dim]o: open  y/l/n: continue/defer/discard  u: reload  r: review[/dim]", markup=True)
+        with Vertical(id="packs-list-view"):
+            yield Label("[bold]Contribution Packets[/bold]", markup=True)
+            yield DataTable(id="packs-table", cursor_type="row")
+            yield Label("[dim]o: open  w: start work  y/l/n: continue/defer/discard  u: reload  r: review[/dim]", markup=True)
+        with Vertical(id="pack-start-work-view"):
+            yield Static("[dim]Esc 返回列表。o 打开 Packet。[/dim]", id="pack-start-work-hint")
+            yield Static("", id="pack-start-work-panel")
 
     def on_mount(self) -> None:
         table = self.query_one("#packs-table", DataTable)
@@ -82,6 +94,36 @@ class PacksScreen(Vertical):
             return
         with suspend_if_supported(self.app):
             open_path(Path(pack["path"]))
+
+    def action_start_work(self) -> None:
+        pack = self._selected_pack()
+        if pack is None:
+            return
+        try:
+            markdown = Path(pack["path"]).read_text(encoding="utf-8")
+            panel = self.query_one("#pack-start-work-panel", Static)
+            panel.update(format_start_work_from_packet(markdown, self.app.config.resources))
+            self._show_start_work()
+        except Exception as e:
+            log_path = log_exception(
+                self.app.config.notes_vault,
+                f"Failed to start work for {pack['repo']}#{pack['number']}",
+            )
+            self.notify(f"{e} (log: {log_path})", severity="error")
+
+    def action_back_to_list(self) -> None:
+        if not self.query_one("#pack-start-work-view").display:
+            return
+        self.query_one("#packs-list-view").display = True
+        self.query_one("#pack-start-work-view").display = False
+        self.query_one("#packs-table", DataTable).focus()
+
+    def _show_start_work(self) -> None:
+        self.query_one("#packs-list-view").display = False
+        self.query_one("#pack-start-work-view").display = True
+        panel = self.query_one("#pack-start-work-panel", Static)
+        panel.can_focus = True
+        panel.focus()
 
     async def _mark_selected_pack_decision(self, decision: str) -> None:
         pack = self._selected_pack()

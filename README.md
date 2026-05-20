@@ -50,11 +50,11 @@ Turns open issues from your watched repos into an opportunity queue. Press `f` t
 
 The default Discover queue is `Active`: issues you have not deferred or discarded, plus previously deferred/discarded issues whose upstream content or configured resources changed. The status line shows how many issues are visible, which action filter is active, when the repo was last fetched, when issues were last ranked, how many are still unranked, how many already have packets, and how many items are deferred, discarded, or changed. Press `a` to cycle the visible queue through `Active`, `Do now`, `Review`, `Rec Defer`, `Skip`, `Packeted`, `Deferred`, `Discarded`, `Changed`, and `All`.
 
-Open an issue detail view to see the recommendation and source evidence side by side. The left `Analysis` pane keeps the recommended action, resource explanation, next step, and continue/stop criteria visible; the right `Source` pane contains the Chinese summary, original issue text, and comments. Press `Tab` to switch panes. Press `g` on an issue to generate a Contribution Packet, or `o` to open an existing packet for the selected issue. Press `y`, `l`, or `n` to mark the selected issue as Continue, Defer, or Discard; osmind writes the decision to the packet frontmatter, appends it to the Decision Log, records the current resource profile, and updates the local index. Deferred and discarded issues leave the Active queue until GitHub updates the issue or your `resources` config changes. Press `c` or `x` to launch **Claude Code** or **Codex** directly with the issue context pre-loaded.
+Open an issue detail view to see the recommendation and source evidence side by side. The left `Analysis` pane keeps the recommended action, resource explanation, next step, and continue/stop criteria visible; the right `Source` pane contains the Chinese summary, original issue text, and comments. Press `Tab` to switch panes. Press `g` on an issue to generate a Contribution Packet, `w` to open the Start Work panel, or `o` to open an existing packet for the selected issue. Press `y`, `l`, or `n` to mark the selected issue as Continue, Defer, or Discard; osmind writes the decision to the packet frontmatter, appends it to the Decision Log, records the current resource profile, and updates the local index. Deferred and discarded issues leave the Active queue until GitHub updates the issue or your `resources` config changes. Press `c` or `x` to launch **Claude Code** or **Codex** directly with the issue context pre-loaded.
 
 ### Packs
 
-Lists generated Contribution Packets from the local SQLite cache. You can open packets, inspect their status, decision, and confidence, mark Continue/Defer/Discard decisions, and regenerate material when the source item changes.
+Lists generated Contribution Packets from the local SQLite cache. You can open packets, inspect their status, decision, and confidence, mark Continue/Defer/Discard decisions, and regenerate material when the source item changes. Press `w` on a packet to open Start Work, which extracts the first 10 minutes, files/symbols, validation path, continue/stop criteria, and agent prompt into one execution-focused view.
 
 ### Review
 
@@ -160,6 +160,7 @@ For the ranking and Socratic use case, a 7B–27B local model is sufficient.
 | `a` | Cycle the Discover action filter |
 | `Tab` | Switch between Analysis and Source panes in issue detail (Discover) |
 | `g` | Generate Contribution Packet for selected issue (Discover) |
+| `w` | Open Start Work for the selected issue or packet |
 | `o` | Open Contribution Packet for selected issue or selected packet |
 | `y` | Mark selected issue or packet as Continue |
 | `l` | Mark selected issue or packet as Defer |

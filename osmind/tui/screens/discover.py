@@ -11,6 +11,7 @@ from osmind.tui.lifecycle import resources_hash
 from osmind.tui.recommendation import action_reason, next_step_for_action, recommended_action
 from osmind.tui.suspend import suspend_if_supported
 from osmind.tui.widgets.issue_list import IssueTable
+from osmind.tui.workflow import format_start_work_from_packet
 
 
 class DiscoverScreen(Vertical):
@@ -35,9 +36,11 @@ class DiscoverScreen(Vertical):
     DiscoverScreen #loader { display: none; height: 3; }
     DiscoverScreen #issue-list-view { height: 1fr; }
     DiscoverScreen #issue-detail-view { display: none; height: 1fr; }
+    DiscoverScreen #start-work-view { display: none; height: 1fr; }
     DiscoverScreen #issue-detail-content { height: 1fr; }
     DiscoverScreen IssueTable { height: 1fr; }
     DiscoverScreen #issue-summary-panel { height: 4; padding: 0 1; }
+    DiscoverScreen #start-work-panel { height: 1fr; padding: 0 1; overflow-y: auto; }
     DiscoverScreen #issue-analysis-panel {
         width: 38%;
         min-width: 32;
@@ -63,6 +66,7 @@ class DiscoverScreen(Vertical):
         ("v", "view_issue", "View Issue"),
         ("escape", "back_to_list", "Back"),
         ("g", "generate_pack", "Generate Packet"),
+        ("w", "start_work", "Start Work"),
         ("o", "open_pack", "Open Packet"),
         ("y", "mark_continue", "Continue"),
         ("l", "mark_defer", "Defer"),
@@ -96,6 +100,9 @@ class DiscoverScreen(Vertical):
             with Horizontal(id="issue-detail-content"):
                 yield Static("", id="issue-analysis-panel")
                 yield Static("", id="issue-source-panel")
+        with Vertical(id="start-work-view"):
+            yield Static("[dim]Esc 返回列表。o 打开 Packet。c/x 交给 Claude/Codex。[/dim]", id="start-work-hint")
+            yield Static("", id="start-work-panel")
 
     def on_data_table_row_highlighted(self, event) -> None:
         row_key = event.row_key.value if event.row_key else None
@@ -382,7 +389,7 @@ class DiscoverScreen(Vertical):
 
             hint = self.query_one("#hint", Label)
             hint.update(
-                "  ↑↓ navigate  Enter/v: Details  g: Packet  o: Open  u: Update from GitHub  s: Re-rank  y/l/n: Decision"
+                "  ↑↓ navigate  Enter/v: Details  g: Packet  w: Start Work  o: Open  u: Update from GitHub  s: Re-rank  y/l/n: Decision"
             )
             self.query_one("#loader", LoadingIndicator).display = False
             if failures:
@@ -447,30 +454,34 @@ class DiscoverScreen(Vertical):
 
     def action_back_to_list(self) -> None:
         detail_view = self.query_one("#issue-detail-view")
-        if detail_view.display:
+        work_view = self.query_one("#start-work-view")
+        if detail_view.display or work_view.display:
             self._show_list()
             self.query_one(IssueTable).focus()
 
     def _show_detail(self) -> None:
         self.query_one("#issue-list-view").display = False
         self.query_one("#issue-detail-view").display = True
+        self.query_one("#start-work-view").display = False
         self.query_one(IssueTable).can_focus = False
         self.query_one("#repo-select", Select).can_focus = False
         self.query_one("#action-filter", Select).can_focus = False
         self.query_one("#issue-analysis-panel", Static).can_focus = True
         self.query_one("#issue-source-panel", Static).can_focus = True
         self.query_one("#hint", Label).update(
-            "  Tab: Analysis/Source  Esc: Back  g: Packet  o: Open  u: Update from GitHub  s: Re-rank  y/l/n: Decision"
+            "  Tab: Analysis/Source  Esc: Back  g: Packet  w: Start Work  o: Open  u: Update from GitHub  s: Re-rank  y/l/n: Decision"
         )
 
     def _show_list(self) -> None:
         self.query_one("#issue-list-view").display = True
         self.query_one("#issue-detail-view").display = False
+        self.query_one("#start-work-view").display = False
         self.query_one(IssueTable).can_focus = True
         self.query_one("#repo-select", Select).can_focus = True
         self.query_one("#action-filter", Select).can_focus = True
         self.query_one("#issue-analysis-panel", Static).can_focus = False
         self.query_one("#issue-source-panel", Static).can_focus = False
+        self.query_one("#start-work-panel", Static).can_focus = False
 
     def action_toggle_detail_focus(self) -> None:
         detail_view = self.query_one("#issue-detail-view")
@@ -510,6 +521,41 @@ class DiscoverScreen(Vertical):
                 return cached_path
 
         return None
+
+    async def action_start_work(self) -> None:
+        issue = self._get_selected_issue()
+        if not issue:
+            self.notify("先选中一个 issue", severity="warning")
+            return
+        try:
+            path = self._pack_path_for_issue(issue)
+            if path is None:
+                path = await asyncio.to_thread(lambda: self._library().write_issue_pack(issue))
+                self._pack_paths_by_key[self._pack_key(issue)] = str(path)
+                self._update_freshness_status()
+            markdown = path.read_text(encoding="utf-8")
+            self.query_one("#start-work-panel", Static).update(
+                format_start_work_from_packet(markdown, self.app.config.resources)
+            )
+            self._show_start_work()
+        except Exception as e:
+            log_path = log_exception(
+                self.app.config.notes_vault,
+                f"Failed to start work for {issue.repo}#{issue.number}",
+            )
+            self.notify(f"{e} (log: {log_path})", severity="error")
+
+    def _show_start_work(self) -> None:
+        self.query_one("#issue-list-view").display = False
+        self.query_one("#issue-detail-view").display = False
+        self.query_one("#start-work-view").display = True
+        self.query_one(IssueTable).can_focus = False
+        self.query_one("#repo-select", Select).can_focus = False
+        self.query_one("#action-filter", Select).can_focus = False
+        panel = self.query_one("#start-work-panel", Static)
+        panel.can_focus = True
+        panel.focus()
+        self.query_one("#hint", Label).update("  Esc: Back  o: Open Packet  c/x: Launch Agent")
 
     async def action_generate_pack(self) -> None:
         issue = self._get_selected_issue()

@@ -150,6 +150,26 @@ def test_packs_reload_does_not_shadow_review_navigation_key():
     assert packs_reload_keys.isdisjoint(review_keys)
 
 
+def test_start_work_key_does_not_shadow_review_navigation_key():
+    from osmind.tui.app import OsmindApp
+    from osmind.tui.screens.discover import DiscoverScreen
+    from osmind.tui.screens.packs import PacksScreen
+
+    review_keys = {
+        binding[0]
+        for binding in OsmindApp.BINDINGS
+        if binding[1] == "switch_tab('review')"
+    }
+    start_work_keys = {
+        binding[0]
+        for binding in [*DiscoverScreen.BINDINGS, *PacksScreen.BINDINGS]
+        if binding[1] == "start_work"
+    }
+
+    assert start_work_keys == {"w"}
+    assert start_work_keys.isdisjoint(review_keys)
+
+
 @pytest.mark.asyncio
 async def test_discover_fetch_exception_is_logged(temp_config, monkeypatch):
     from osmind.tui.screens.discover import DiscoverScreen
@@ -845,6 +865,48 @@ async def test_packs_open_empty_table_does_not_crash(temp_config, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_packs_start_work_shows_selected_packet_plan(temp_config):
+    from osmind.github.models import GHPR
+    from osmind.services.library import PackLibrary
+    from textual.widgets import DataTable, Static
+
+    library = PackLibrary(
+        temp_config.notes_vault,
+        temp_config.notes_vault / "osmind" / ".cache" / "osmind.db",
+    )
+    library.write_pr_pack(
+        GHPR(
+            number=3,
+            title="Workable Pack",
+            body="A small contribution path.",
+            url="https://github.com/o/r/pull/3",
+            repo="o/r",
+            updated_at="u3",
+        )
+    )
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        app.action_switch_tab("packs")
+        await pilot.pause()
+        table = app.query_one("#packs-table", DataTable)
+        table.cursor_coordinate = (0, 0)
+
+        app.query_one("PacksScreen").action_start_work()
+        panel = app.query_one("#pack-start-work-panel", Static)
+
+        assert app.query_one("#packs-list-view").display is False
+        assert app.query_one("#pack-start-work-view").display is True
+
+    content = str(panel.content)
+    assert "Start Work" in content
+    assert "PR #3: Workable Pack" in content
+    assert "First 10 Minutes" in content
+    assert "Validation Path" in content
+    assert "Agent Exploration Prompt" in content
+
+
+@pytest.mark.asyncio
 async def test_switching_to_packs_lazy_loads_existing_packs(temp_config):
     from osmind.github.models import GHPR
     from osmind.services.library import PackLibrary
@@ -1364,6 +1426,47 @@ async def test_discover_generate_pack_writes_selected_issue(temp_config, monkeyp
     assert "# Issue #42: Tokenizer leak" in path.read_text(encoding="utf-8")
 
 
+@pytest.mark.asyncio
+async def test_discover_start_work_generates_packet_and_shows_plan(temp_config, monkeypatch):
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    from textual.widgets import Static
+
+    issue = GHIssue(
+        number=43,
+        title="Tokenizer leak",
+        body="The tokenizer cache keeps growing. Please add a pytest regression.",
+        labels=["bug"],
+        url="https://github.com/o/r/issues/43",
+        repo="o/r",
+        state="open",
+        updated_at="u43",
+        reason="资源足够，适合先写最小复现。",
+        priority="high",
+        fit="high",
+        resource_fit="ok",
+        actionability="high",
+    )
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        monkeypatch.setattr(discover, "_get_selected_issue", lambda: issue)
+
+        await discover.action_start_work()
+        panel = app.query_one("#start-work-panel", Static)
+
+        assert app.query_one("#issue-list-view").display is False
+        assert app.query_one("#start-work-view").display is True
+
+    content = str(panel.content)
+    assert "Start Work" in content
+    assert "Issue #43: Tokenizer leak" in content
+    assert "First 10 Minutes" in content
+    assert "Validation Path" in content
+    assert "Agent Exploration Prompt" in content
+
+
 def test_discover_bindings_include_generate_and_open_pack():
     from osmind.tui.screens.discover import DiscoverScreen
 
@@ -1377,8 +1480,10 @@ def test_discover_bindings_include_generate_and_open_pack():
     assert bindings_by_action["mark_discard"] == "Discard"
     assert bindings_by_action["update"] == "Update from GitHub"
     assert bindings_by_action["rescore"] == "Re-rank"
+    assert bindings_by_action["start_work"] == "Start Work"
     assert keys_by_action["update"] == "u"
     assert keys_by_action["rescore"] == "s"
+    assert keys_by_action["start_work"] == "w"
     assert "r" not in {binding[0] for binding in DiscoverScreen.BINDINGS}
 
 
