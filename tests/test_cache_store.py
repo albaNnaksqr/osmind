@@ -211,6 +211,31 @@ def test_cache_updates_pack_decision(tmp_path: Path):
     assert pack["decision"] == "defer"
 
 
+def test_cache_records_decision_resource_hash(tmp_path: Path):
+    store = CacheStore(tmp_path / "osmind.db")
+    store.upsert_pack(
+        repo="o/r",
+        source_type="issue",
+        number=42,
+        path=tmp_path / "pack.md",
+        status="unread",
+        confidence="unknown",
+        source_updated_at="u1",
+        decision_resource_hash="resources-v1",
+    )
+
+    created = store.get_pack("o/r", "issue", 42)
+    assert created is not None
+    assert created["decision_resource_hash"] == "resources-v1"
+
+    store.update_pack_decision("o/r", "issue", 42, "discard", decision_resource_hash="resources-v2")
+
+    updated = store.get_pack("o/r", "issue", 42)
+    assert updated is not None
+    assert updated["decision"] == "discard"
+    assert updated["decision_resource_hash"] == "resources-v2"
+
+
 def test_cache_lists_same_second_packs_newest_first(tmp_path: Path):
     store = CacheStore(tmp_path / "osmind.db")
     store.upsert_pack("o/r", "issue", 1, tmp_path / "first.md", "unread", "unknown", "u1")

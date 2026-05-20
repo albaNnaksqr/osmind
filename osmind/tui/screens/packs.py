@@ -10,6 +10,7 @@ from textual.widgets import DataTable, Label
 from osmind.logs import log_exception
 from osmind.packs.opener import open_path
 from osmind.services.library import PackLibrary
+from osmind.tui.lifecycle import resources_hash
 from osmind.tui.suspend import suspend_if_supported
 
 
@@ -93,6 +94,7 @@ class PacksScreen(Vertical):
                     pack["source_type"],
                     int(pack["number"]),
                     decision,
+                    decision_resource_hash=resources_hash(self.app.config.resources),
                 )
             )
             self._load()

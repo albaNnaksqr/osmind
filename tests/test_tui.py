@@ -371,6 +371,120 @@ async def test_discover_action_filter_cycles_visible_recommendations(temp_config
 
 
 @pytest.mark.asyncio
+async def test_discover_active_queue_hides_user_deferred_and_discarded_items(temp_config):
+    from osmind.cache.store import CacheStore
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    from osmind.tui.widgets.issue_list import IssueTable
+    from textual.widgets import Select, Static
+
+    active = GHIssue(1, "Active issue", "Body", [], "u1", "sgl-project/sglang", "open", score=0.9)
+    deferred = GHIssue(2, "Deferred issue", "Body", [], "u2", "sgl-project/sglang", "open", score=0.8)
+    discarded = GHIssue(3, "Discarded issue", "Body", [], "u3", "sgl-project/sglang", "open", score=0.7)
+    cache = CacheStore(temp_config.notes_vault / "osmind" / ".cache" / "osmind.db")
+    for issue in (active, deferred, discarded):
+        cache.upsert_issue(issue)
+    cache.upsert_pack("sgl-project/sglang", "issue", 2, temp_config.notes_vault / "d.md", "unread", "unknown", "u2", decision="defer")
+    cache.upsert_pack("sgl-project/sglang", "issue", 3, temp_config.notes_vault / "x.md", "unread", "unknown", "u3", decision="discard")
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        table = app.query_one(IssueTable)
+        discover._show_issues([active, deferred, discarded])
+
+        assert table.row_count == 1
+        assert table.get_row_at(0)[2] == "1"
+        status = str(app.query_one("#freshness-status", Static).content)
+        assert "Filter: Active" in status
+        assert "Deferred: 1" in status
+        assert "Discarded: 1" in status
+
+        app.query_one("#action-filter", Select).value = "deferred"
+        await pilot.pause()
+
+        assert table.row_count == 1
+        assert table.get_row_at(0)[2] == "2"
+
+
+@pytest.mark.asyncio
+async def test_discover_active_queue_resurfaces_deferred_item_when_source_updates(temp_config):
+    from osmind.cache.store import CacheStore
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    from osmind.tui.widgets.issue_list import IssueTable
+    from textual.widgets import Static
+
+    issue = GHIssue(
+        42,
+        "Updated issue",
+        "Body",
+        [],
+        "https://github.com/sgl-project/sglang/issues/42",
+        "sgl-project/sglang",
+        "open",
+        score=0.8,
+        updated_at="new-update",
+    )
+    cache = CacheStore(temp_config.notes_vault / "osmind" / ".cache" / "osmind.db")
+    cache.upsert_issue(issue)
+    cache.upsert_pack(
+        "sgl-project/sglang",
+        "issue",
+        42,
+        temp_config.notes_vault / "deferred.md",
+        "unread",
+        "unknown",
+        "old-update",
+        decision="defer",
+    )
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        table = app.query_one(IssueTable)
+        discover._show_issues([issue])
+
+        assert table.row_count == 1
+        assert table.get_row_at(0)[2] == "42"
+        assert "Changed: 1" in str(app.query_one("#freshness-status", Static).content)
+
+
+@pytest.mark.asyncio
+async def test_discover_active_queue_resurfaces_deferred_item_when_resources_change(temp_config):
+    from osmind.cache.store import CacheStore
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    from osmind.tui.widgets.issue_list import IssueTable
+    from textual.widgets import Static
+
+    issue = GHIssue(42, "Resource-sensitive issue", "Body", [], "u42", "sgl-project/sglang", "open", score=0.8)
+    cache = CacheStore(temp_config.notes_vault / "osmind" / ".cache" / "osmind.db")
+    cache.upsert_issue(issue)
+    cache.upsert_pack(
+        "sgl-project/sglang",
+        "issue",
+        42,
+        temp_config.notes_vault / "deferred.md",
+        "unread",
+        "unknown",
+        "u42",
+        decision="defer",
+        decision_resource_hash="previous-resources",
+    )
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        table = app.query_one(IssueTable)
+        discover._show_issues([issue])
+
+        assert table.row_count == 1
+        assert table.get_row_at(0)[2] == "42"
+        assert "Changed: 1" in str(app.query_one("#freshness-status", Static).content)
+
+
+@pytest.mark.asyncio
 async def test_discover_freshness_status_shows_cached_fetch_and_rank_times(temp_config):
     from osmind.cache.store import CacheStore
     from osmind.github.models import GHIssue
@@ -392,7 +506,7 @@ async def test_discover_freshness_status_shows_cached_fetch_and_rank_times(temp_
     assert "1 issues" in status
     assert "Last fetched:" in status
     assert "Last ranked:" in status
-    assert "Filter: All" in status
+    assert "Filter: Active" in status
 
 
 @pytest.mark.asyncio
@@ -1155,6 +1269,7 @@ async def test_discover_decision_action_creates_packet_and_marks_decision(temp_c
     markdown = path.read_text(encoding="utf-8")
     assert "decision: continue" in markdown
     assert library.list_packs()[0]["decision"] == "continue"
+    assert library.list_packs()[0]["decision_resource_hash"]
 
 
 @pytest.mark.asyncio

@@ -68,6 +68,7 @@ def test_write_pr_pack_creates_markdown_and_cache_record(tmp_path):
             "path": str(path),
             "status": "unread",
             "decision": "undecided",
+            "decision_resource_hash": "",
             "confidence": "unknown",
             "source_updated_at": "2026-05-15T01:02:03+00:00",
             "generated_at": packs[0]["generated_at"],

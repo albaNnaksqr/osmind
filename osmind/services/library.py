@@ -66,7 +66,15 @@ class PackLibrary:
     def list_packs(self) -> list[dict]:
         return self.cache.list_packs()
 
-    def set_pack_decision(self, repo: str, source_type: str, number: int, decision: str) -> Path:
+    def set_pack_decision(
+        self,
+        repo: str,
+        source_type: str,
+        number: int,
+        decision: str,
+        *,
+        decision_resource_hash: str = "",
+    ) -> Path:
         if decision not in VALID_PACK_DECISIONS:
             raise ValueError(f"Unsupported pack decision: {decision}")
 
@@ -81,7 +89,13 @@ class PackLibrary:
         markdown = path.read_text(encoding="utf-8")
         updated_markdown = _mark_decision(markdown, decision)
         _atomic_write_text(path, updated_markdown)
-        if not self.cache.update_pack_decision(repo, source_type, number, decision):
+        if not self.cache.update_pack_decision(
+            repo,
+            source_type,
+            number,
+            decision,
+            decision_resource_hash=decision_resource_hash,
+        ):
             raise FileNotFoundError(f"No Contribution Packet cached for {repo} {source_type} #{number}")
         return path
 

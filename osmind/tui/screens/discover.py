@@ -7,6 +7,7 @@ from textual.widgets import Label, LoadingIndicator, Select, Static
 from textual.containers import Vertical, Horizontal
 from osmind.logs import log_exception
 from osmind.packs.opener import open_path
+from osmind.tui.lifecycle import resources_hash
 from osmind.tui.recommendation import action_reason, next_step_for_action, recommended_action
 from osmind.tui.suspend import suspend_if_supported
 from osmind.tui.widgets.issue_list import IssueTable
@@ -14,12 +15,16 @@ from osmind.tui.widgets.issue_list import IssueTable
 
 class DiscoverScreen(Vertical):
     ACTION_FILTERS = [
-        ("All", "all"),
+        ("Active", "active"),
         ("Do now", "do_now"),
         ("Review", "review"),
-        ("Defer", "defer"),
+        ("Rec Defer", "rec_defer"),
         ("Skip", "skip"),
         ("Packeted", "packeted"),
+        ("Deferred", "deferred"),
+        ("Discarded", "discarded"),
+        ("Changed", "changed"),
+        ("All", "all"),
     ]
     DEFAULT_CSS = """
     DiscoverScreen #toolbar { height: 3; }
@@ -68,7 +73,7 @@ class DiscoverScreen(Vertical):
         super().__init__()
         self._issues_by_number: dict[str, object] = {}
         self._pack_paths_by_key: dict[tuple[str, str, int], str] = {}
-        self._action_filter = "all"
+        self._action_filter = "active"
 
     def compose(self) -> ComposeResult:
         watching = self.app.config.watching
@@ -76,9 +81,9 @@ class DiscoverScreen(Vertical):
         initial = watching[0]["repo"] if watching else Select.BLANK
         with Horizontal(id="toolbar"):
             yield Select(options, id="repo-select", value=initial)
-            yield Select(self.ACTION_FILTERS, id="action-filter", value="all")
+            yield Select(self.ACTION_FILTERS, id="action-filter", value="active")
             yield Label("  f: Open opportunities  u: Update from GitHub  s: Re-rank", id="hint")
-        yield Static("Filter: All | No opportunities loaded", id="freshness-status")
+        yield Static("Filter: Active | No opportunities loaded", id="freshness-status")
         yield LoadingIndicator(id="loader")
         with Vertical(id="issue-list-view"):
             yield IssueTable(id="issue-table")
@@ -211,20 +216,32 @@ class DiscoverScreen(Vertical):
 
     def _filtered_issues(self):
         issues = list(self._issues_by_number.values())
+        if self._action_filter == "active":
+            return [issue for issue in issues if self._issue_lifecycle(issue) in {"active", "changed"}]
         if self._action_filter == "all":
             return issues
         if self._action_filter == "packeted":
             return [issue for issue in issues if self._pack_path_for_issue(issue) is not None]
+        if self._action_filter == "deferred":
+            return [issue for issue in issues if self._issue_lifecycle(issue) == "defer"]
+        if self._action_filter == "discarded":
+            return [issue for issue in issues if self._issue_lifecycle(issue) == "discard"]
+        if self._action_filter == "changed":
+            return [issue for issue in issues if self._issue_lifecycle(issue) == "changed"]
 
         expected_action = {
             "do_now": "Do now",
             "review": "Review",
-            "defer": "Defer",
+            "rec_defer": "Defer",
             "skip": "Skip",
         }.get(self._action_filter)
         if expected_action is None:
             return issues
-        return [issue for issue in issues if recommended_action(issue) == expected_action]
+        return [
+            issue
+            for issue in issues
+            if self._issue_lifecycle(issue) in {"active", "changed"} and recommended_action(issue) == expected_action
+        ]
 
     def _set_action_filter(self, value: str) -> None:
         valid_values = {filter_value for _, filter_value in self.ACTION_FILTERS}
@@ -269,10 +286,43 @@ class DiscoverScreen(Vertical):
         ranked = activity["last_ranked_at"] or "never"
         unranked = activity["unranked_count"]
         packets = activity["packet_count"]
+        deferred, discarded, changed = self._lifecycle_counts()
         status.update(
             f"{visible_count} visible / {issue_count} issues | Filter: {self._filter_label()} | "
-            f"Last fetched: {fetched} | Last ranked: {ranked} | Unranked: {unranked} | Packets: {packets}"
+            f"Last fetched: {fetched} | Last ranked: {ranked} | Unranked: {unranked} | Packets: {packets} | "
+            f"Deferred: {deferred} | Discarded: {discarded} | Changed: {changed}"
         )
+
+    def _lifecycle_counts(self) -> tuple[int, int, int]:
+        states = [self._issue_lifecycle(issue) for issue in self._issues_by_number.values()]
+        return states.count("defer"), states.count("discard"), states.count("changed")
+
+    def _issue_lifecycle(self, issue) -> str:
+        cached_pack = self._cached_pack_for_issue(issue)
+        if cached_pack is None:
+            return "active"
+
+        decision = str(cached_pack.get("decision") or "undecided")
+        if decision not in {"defer", "discard"}:
+            return "active"
+        if self._decision_context_changed(issue, cached_pack):
+            return "changed"
+        return decision
+
+    def _decision_context_changed(self, issue, cached_pack: dict) -> bool:
+        source_updated_at = str(cached_pack.get("source_updated_at") or "")
+        issue_updated_at = str(getattr(issue, "updated_at", "") or "")
+        if source_updated_at and issue_updated_at and source_updated_at != issue_updated_at:
+            return True
+
+        decision_resource_hash = str(cached_pack.get("decision_resource_hash") or "")
+        return bool(decision_resource_hash and decision_resource_hash != resources_hash(self.app.config.resources))
+
+    def _cached_pack_for_issue(self, issue) -> dict | None:
+        try:
+            return self._cache().get_pack(issue.repo, "issue", issue.number)
+        except Exception:
+            return None
 
     async def _fetch_from_github_and_score(self, repo: str) -> None:
         self._set_busy(f"  Updating {repo} from GitHub…")
@@ -508,11 +558,17 @@ class DiscoverScreen(Vertical):
                 path = await asyncio.to_thread(lambda: self._library().write_issue_pack(issue))
                 self._pack_paths_by_key[self._pack_key(issue)] = str(path)
             path = await asyncio.to_thread(
-                lambda: self._library().set_pack_decision(issue.repo, "issue", issue.number, decision)
+                lambda: self._library().set_pack_decision(
+                    issue.repo,
+                    "issue",
+                    issue.number,
+                    decision,
+                    decision_resource_hash=resources_hash(self.app.config.resources),
+                )
             )
             self._pack_paths_by_key[self._pack_key(issue)] = str(path)
             self.notify(f"Marked {decision}: {path}", timeout=5)
-            self._update_freshness_status()
+            self._refresh_issue_table(focus=True)
         except Exception as e:
             log_path = log_exception(
                 self.app.config.notes_vault,

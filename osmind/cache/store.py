@@ -92,6 +92,7 @@ class CacheStore:
                 path TEXT NOT NULL,
                 status TEXT NOT NULL,
                 decision TEXT NOT NULL DEFAULT 'undecided',
+                decision_resource_hash TEXT NOT NULL DEFAULT '',
                 confidence TEXT NOT NULL,
                 source_updated_at TEXT NOT NULL,
                 generated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -107,12 +108,17 @@ class CacheStore:
         if "decision" not in columns:
             self._conn.execute("ALTER TABLE packs ADD COLUMN decision TEXT NOT NULL DEFAULT 'undecided'")
             columns.add("decision")
+        if "decision_resource_hash" not in columns:
+            self._conn.execute("ALTER TABLE packs ADD COLUMN decision_resource_hash TEXT NOT NULL DEFAULT ''")
+            columns.add("decision_resource_hash")
         if {"id", "version"}.issubset(columns):
             return
 
         legacy_rows = self._conn.execute(
             """
-            SELECT repo, source_type, number, path, status, decision, confidence, source_updated_at, generated_at, stale
+            SELECT
+                repo, source_type, number, path, status, decision, decision_resource_hash,
+                confidence, source_updated_at, generated_at, stale
             FROM packs
             ORDER BY generated_at ASC, rowid ASC
             """
@@ -128,10 +134,17 @@ class CacheStore:
 
         old_columns = self._pack_columns("packs_old")
         decision_expr = "decision" if "decision" in old_columns else "'undecided' AS decision"
+        decision_resource_expr = (
+            "decision_resource_hash"
+            if "decision_resource_hash" in old_columns
+            else "'' AS decision_resource_hash"
+        )
         current_version = self._conn.execute("SELECT COALESCE(MAX(version), 0) AS current_version FROM packs").fetchone()
         legacy_rows = self._conn.execute(
             f"""
-            SELECT repo, source_type, number, path, status, {decision_expr}, confidence, source_updated_at, generated_at, stale
+            SELECT
+                repo, source_type, number, path, status, {decision_expr}, {decision_resource_expr},
+                confidence, source_updated_at, generated_at, stale
             FROM packs_old
             WHERE NOT EXISTS (
                 SELECT 1
@@ -151,8 +164,11 @@ class CacheStore:
             self._conn.execute(
                 """
                 INSERT INTO packs
-                    (repo, source_type, number, path, status, decision, confidence, source_updated_at, generated_at, stale, version)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (
+                        repo, source_type, number, path, status, decision, decision_resource_hash,
+                        confidence, source_updated_at, generated_at, stale, version
+                    )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     row["repo"],
@@ -161,6 +177,7 @@ class CacheStore:
                     row["path"],
                     row["status"],
                     row["decision"],
+                    row["decision_resource_hash"],
                     row["confidence"],
                     row["source_updated_at"],
                     row["generated_at"],
@@ -384,6 +401,7 @@ class CacheStore:
         confidence: str,
         source_updated_at: str,
         decision: str = "undecided",
+        decision_resource_hash: str = "",
     ) -> None:
         try:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -391,26 +409,52 @@ class CacheStore:
             self._conn.execute(
                 """
                 INSERT INTO packs
-                    (repo, source_type, number, path, status, decision, confidence, source_updated_at, stale, version)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+                    (
+                        repo, source_type, number, path, status, decision, decision_resource_hash,
+                        confidence, source_updated_at, stale, version
+                    )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
                 ON CONFLICT(repo, source_type, number) DO UPDATE SET
                     path = excluded.path,
                     status = excluded.status,
                     decision = excluded.decision,
+                    decision_resource_hash = CASE
+                        WHEN excluded.decision_resource_hash != '' THEN excluded.decision_resource_hash
+                        ELSE packs.decision_resource_hash
+                    END,
                     confidence = excluded.confidence,
                     source_updated_at = excluded.source_updated_at,
                     generated_at = CURRENT_TIMESTAMP,
                     stale = 0,
                     version = excluded.version
                 """,
-                (repo, source_type, number, str(path), status, decision, confidence, source_updated_at, next_version),
+                (
+                    repo,
+                    source_type,
+                    number,
+                    str(path),
+                    status,
+                    decision,
+                    decision_resource_hash,
+                    confidence,
+                    source_updated_at,
+                    next_version,
+                ),
             )
             self._conn.commit()
         except Exception:
             self._conn.rollback()
             raise
 
-    def update_pack_decision(self, repo: str, source_type: str, number: int, decision: str) -> bool:
+    def update_pack_decision(
+        self,
+        repo: str,
+        source_type: str,
+        number: int,
+        decision: str,
+        *,
+        decision_resource_hash: str = "",
+    ) -> bool:
         try:
             self._conn.execute("BEGIN IMMEDIATE")
             next_version = self._next_pack_version()
@@ -418,10 +462,11 @@ class CacheStore:
                 """
                 UPDATE packs
                 SET decision = ?,
+                    decision_resource_hash = ?,
                     version = ?
                 WHERE repo = ? AND source_type = ? AND number = ?
                 """,
-                (decision, next_version, repo, source_type, number),
+                (decision, decision_resource_hash, next_version, repo, source_type, number),
             )
             self._conn.commit()
             return cursor.rowcount > 0
@@ -436,7 +481,9 @@ class CacheStore:
     def list_packs(self) -> list[dict[str, Any]]:
         rows = self._conn.execute(
             """
-            SELECT repo, source_type, number, path, status, decision, confidence, source_updated_at, generated_at, stale
+            SELECT
+                repo, source_type, number, path, status, decision, decision_resource_hash,
+                confidence, source_updated_at, generated_at, stale
             FROM packs
             ORDER BY version DESC, id DESC
             """
@@ -446,7 +493,9 @@ class CacheStore:
     def get_pack(self, repo: str, source_type: str, number: int) -> dict[str, Any] | None:
         row = self._conn.execute(
             """
-            SELECT repo, source_type, number, path, status, decision, confidence, source_updated_at, generated_at, stale
+            SELECT
+                repo, source_type, number, path, status, decision, decision_resource_hash,
+                confidence, source_updated_at, generated_at, stale
             FROM packs
             WHERE repo = ? AND source_type = ? AND number = ?
             """,
