@@ -990,6 +990,143 @@ Existing note.
     assert "**Q: What changed?**\n\nThe runner flow changed." in text
 
 
+def test_review_answer_appends_inside_notes_before_follow_up_section(tmp_path):
+    from osmind.tui.screens.review import _append_answer_to_pack
+
+    path = tmp_path / "pack.md"
+    path.write_text(
+        """---
+type: osmind-contribution-packet
+---
+
+# PR #7: Refactor runner
+
+## Notes
+
+Existing note.
+
+## Follow-up
+
+Keep this user section.
+""",
+        encoding="utf-8",
+    )
+
+    _append_answer_to_pack(path, "What changed?", "The runner flow changed.")
+
+    text = path.read_text(encoding="utf-8")
+    assert (
+        "## Notes\n\nExisting note.\n\n**Q: What changed?**\n\n"
+        "The runner flow changed.\n\n## Follow-up\n\nKeep this user section."
+    ) in text
+
+
+def test_review_answers_from_pack_lists_saved_review_entries(tmp_path):
+    from osmind.tui.screens.review import _review_answers_from_pack
+
+    path = tmp_path / "pack.md"
+    path.write_text(
+        """---
+type: osmind-contribution-packet
+---
+
+# Issue #7: Tokenizer leak
+
+## Notes
+
+Existing note.
+
+**Q: First question?**
+
+First answer.
+
+**Q: Second question?**
+
+Second answer.
+""",
+        encoding="utf-8",
+    )
+
+    answers = _review_answers_from_pack(path)
+
+    assert [answer.question for answer in answers] == ["First question?", "Second question?"]
+    assert [answer.answer for answer in answers] == ["First answer.", "Second answer."]
+
+
+def test_review_delete_selected_answer_removes_middle_review_entry(tmp_path):
+    from osmind.tui.screens.review import _delete_answer_from_pack
+
+    path = tmp_path / "pack.md"
+    path.write_text(
+        """---
+type: osmind-contribution-packet
+---
+
+# Issue #7: Tokenizer leak
+
+## Notes
+
+Existing note.
+
+**Q: First question?**
+
+First answer.
+
+**Q: Second question?**
+
+Second answer.
+
+**Q: Third question?**
+
+Third answer.
+""",
+        encoding="utf-8",
+    )
+
+    deleted = _delete_answer_from_pack(path, 1)
+
+    text = path.read_text(encoding="utf-8")
+    assert deleted is True
+    assert "Existing note." in text
+    assert "**Q: First question?**\n\nFirst answer." in text
+    assert "Second question" not in text
+    assert "Second answer" not in text
+    assert "**Q: Third question?**\n\nThird answer." in text
+
+
+def test_review_rewrite_selected_answer_updates_only_that_entry(tmp_path):
+    from osmind.tui.screens.review import _replace_answer_in_pack
+
+    path = tmp_path / "pack.md"
+    path.write_text(
+        """---
+type: osmind-contribution-packet
+---
+
+# Issue #7: Tokenizer leak
+
+## Notes
+
+**Q: First question?**
+
+First answer.
+
+**Q: Second question?**
+
+Second answer.
+""",
+        encoding="utf-8",
+    )
+
+    replaced = _replace_answer_in_pack(path, 1, "Updated second answer.")
+
+    text = path.read_text(encoding="utf-8")
+    assert replaced is True
+    assert "**Q: First question?**\n\nFirst answer." in text
+    assert "**Q: Second question?**\n\nUpdated second answer." in text
+    assert "Second answer." not in text
+
+
 def test_review_delete_last_answer_removes_only_latest_review_entry(tmp_path):
     from osmind.tui.screens.review import _delete_last_answer_from_pack
 
@@ -1065,12 +1202,140 @@ async def test_review_delete_action_removes_last_answer_for_selected_pack(temp_c
     assert "Yes, delete this answer." not in text
 
 
+@pytest.mark.asyncio
+async def test_review_screen_lists_saved_answers_for_selected_pack(temp_config):
+    from osmind.github.models import GHPR
+    from osmind.services.library import PackLibrary
+    from osmind.tui.screens.review import _append_answer_to_pack
+    from textual.widgets import DataTable
+
+    library = PackLibrary(
+        temp_config.notes_vault,
+        temp_config.notes_vault / "osmind" / ".cache" / "osmind.db",
+    )
+    path = library.write_pr_pack(
+        GHPR(
+            number=14,
+            title="Review answer table pack",
+            body="",
+            url="https://github.com/o/r/pull/14",
+            repo="o/r",
+            updated_at="u14",
+        )
+    )
+    _append_answer_to_pack(path, "First question?", "First answer.")
+    _append_answer_to_pack(path, "Second question?", "Second answer.")
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        app.action_switch_tab("review")
+        await pilot.pause()
+        await pilot.pause()
+        answers = app.query_one("#answers-table", DataTable)
+
+        assert answers.row_count == 2
+        assert answers.get_row_at(0)[1] == "First question?"
+        assert answers.get_row_at(1)[1] == "Second question?"
+
+
+@pytest.mark.asyncio
+async def test_review_delete_action_removes_selected_answer_for_selected_pack(temp_config):
+    from osmind.github.models import GHPR
+    from osmind.services.library import PackLibrary
+    from osmind.tui.screens.review import _append_answer_to_pack
+    from textual.widgets import DataTable
+
+    library = PackLibrary(
+        temp_config.notes_vault,
+        temp_config.notes_vault / "osmind" / ".cache" / "osmind.db",
+    )
+    path = library.write_pr_pack(
+        GHPR(
+            number=15,
+            title="Review selected delete pack",
+            body="",
+            url="https://github.com/o/r/pull/15",
+            repo="o/r",
+            updated_at="u15",
+        )
+    )
+    _append_answer_to_pack(path, "First question?", "First answer.")
+    _append_answer_to_pack(path, "Second question?", "Second answer.")
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        app.action_switch_tab("review")
+        await pilot.pause()
+        await pilot.pause()
+        answers = app.query_one("#answers-table", DataTable)
+        answers.focus()
+        answers.cursor_coordinate = (0, 0)
+
+        app.query_one("ReviewScreen").action_delete_selected_answer()
+        await pilot.pause()
+
+    text = path.read_text(encoding="utf-8")
+    assert "First question?" not in text
+    assert "First answer." not in text
+    assert "**Q: Second question?**\n\nSecond answer." in text
+
+
+@pytest.mark.asyncio
+async def test_review_rewrite_action_replaces_selected_answer(temp_config):
+    from osmind.github.models import GHPR
+    from osmind.services.library import PackLibrary
+    from osmind.tui.screens.review import _append_answer_to_pack
+    from textual.widgets import DataTable, Input
+
+    library = PackLibrary(
+        temp_config.notes_vault,
+        temp_config.notes_vault / "osmind" / ".cache" / "osmind.db",
+    )
+    path = library.write_pr_pack(
+        GHPR(
+            number=16,
+            title="Review rewrite pack",
+            body="",
+            url="https://github.com/o/r/pull/16",
+            repo="o/r",
+            updated_at="u16",
+        )
+    )
+    _append_answer_to_pack(path, "First question?", "First answer.")
+    _append_answer_to_pack(path, "Second question?", "Second answer.")
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        app.action_switch_tab("review")
+        await pilot.pause()
+        await pilot.pause()
+        answers = app.query_one("#answers-table", DataTable)
+        answers.focus()
+        answers.cursor_coordinate = (1, 0)
+
+        review = app.query_one("ReviewScreen")
+        review.action_rewrite_answer()
+        review_input = app.query_one("#review-input", Input)
+        assert app.focused is review_input
+        assert review_input.value == "Second answer."
+
+        review_input.value = "Updated second answer."
+        review.on_input_submitted(Input.Submitted(review_input, review_input.value))
+        await pilot.pause()
+
+    text = path.read_text(encoding="utf-8")
+    assert "**Q: First question?**\n\nFirst answer." in text
+    assert "**Q: Second question?**\n\nUpdated second answer." in text
+    assert "Second answer." not in text
+
+
 def test_review_bindings_include_delete_last_answer():
     from osmind.tui.screens.review import ReviewScreen
 
     bindings_by_action = {binding[1]: binding for binding in ReviewScreen.BINDINGS}
 
-    assert bindings_by_action["delete_last_answer"][0] == "delete"
+    assert bindings_by_action["delete_selected_answer"][0] == "delete"
+    assert bindings_by_action["rewrite_answer"][0] == "e"
 
 
 @pytest.mark.asyncio

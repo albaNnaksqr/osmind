@@ -58,7 +58,7 @@ Lists generated Contribution Packets from the local SQLite cache. You can open p
 
 ### Review
 
-osmind reads generated Contribution Packets and asks Socratic review questions. Your answers are appended back into the packet's `## Notes` section so the Markdown file remains the durable learning record. In Review, press `Delete` to remove the most recent saved Review answer from the current or selected packet.
+osmind reads generated Contribution Packets and asks Socratic review questions. Your answers are appended back into the packet's `## Notes` section so the Markdown file remains the durable learning record. The right pane lists saved Review Q/A entries for the selected packet; press `v` to focus that list, `Delete` to remove the selected answer, or `e` to load the selected answer into the input for rewriting.
 
 ### Settings
 
@@ -164,7 +164,9 @@ For the ranking and Socratic use case, a 7B–27B local model is sufficient.
 | `y` | Mark selected issue or packet as Continue |
 | `l` | Mark selected issue or packet as Defer |
 | `n` | Mark selected issue or packet as Discard |
-| `Delete` | Remove the most recent saved Review answer from the current or selected packet (Review) |
+| `v` | Focus saved Review answers for the selected packet (Review) |
+| `e` | Rewrite the selected saved Review answer (Review) |
+| `Delete` | Remove the selected saved Review answer, or the latest answer when no answer row is selected (Review) |
 | `c` | Launch Claude Code on selected issue |
 | `x` | Launch Codex on selected issue |
 | `q` | Quit |
