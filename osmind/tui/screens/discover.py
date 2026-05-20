@@ -13,10 +13,20 @@ from osmind.tui.widgets.issue_list import IssueTable
 
 
 class DiscoverScreen(Vertical):
+    ACTION_FILTERS = [
+        ("All", "all"),
+        ("Do now", "do_now"),
+        ("Review", "review"),
+        ("Defer", "defer"),
+        ("Skip", "skip"),
+        ("Packeted", "packeted"),
+    ]
     DEFAULT_CSS = """
     DiscoverScreen #toolbar { height: 3; }
     DiscoverScreen #repo-select { width: 32; height: 3; }
+    DiscoverScreen #action-filter { width: 18; height: 3; }
     DiscoverScreen #hint { width: 1fr; height: 3; content-align: left middle; }
+    DiscoverScreen #freshness-status { height: 2; padding: 0 1; }
     DiscoverScreen #loader { display: none; height: 3; }
     DiscoverScreen #issue-list-view { height: 1fr; }
     DiscoverScreen #issue-detail-view { display: none; height: 1fr; }
@@ -42,6 +52,7 @@ class DiscoverScreen(Vertical):
         ("f", "fetch", "Fetch Issues"),
         ("u", "update", "Update from GitHub"),
         ("s", "rescore", "Re-rank"),
+        ("a", "cycle_action_filter", "Filter"),
         ("tab", "toggle_detail_focus", "Switch Pane"),
         ("enter", "view_issue", "View Issue"),
         ("v", "view_issue", "View Issue"),
@@ -57,6 +68,7 @@ class DiscoverScreen(Vertical):
         super().__init__()
         self._issues_by_number: dict[str, object] = {}
         self._pack_paths_by_key: dict[tuple[str, str, int], str] = {}
+        self._action_filter = "all"
 
     def compose(self) -> ComposeResult:
         watching = self.app.config.watching
@@ -64,7 +76,9 @@ class DiscoverScreen(Vertical):
         initial = watching[0]["repo"] if watching else Select.BLANK
         with Horizontal(id="toolbar"):
             yield Select(options, id="repo-select", value=initial)
+            yield Select(self.ACTION_FILTERS, id="action-filter", value="all")
             yield Label("  f: Open opportunities  u: Update from GitHub  s: Re-rank", id="hint")
+        yield Static("Filter: All | No opportunities loaded", id="freshness-status")
         yield LoadingIndicator(id="loader")
         with Vertical(id="issue-list-view"):
             yield IssueTable(id="issue-table")
@@ -102,6 +116,12 @@ class DiscoverScreen(Vertical):
         event.prevent_default()
         event.stop()
         self.action_toggle_detail_focus()
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id != "action-filter" or event.value is Select.BLANK:
+            return
+        event.stop()
+        self._set_action_filter(str(event.value))
 
     async def action_fetch(self) -> None:
         repo = self._selected_repo()
@@ -166,10 +186,11 @@ class DiscoverScreen(Vertical):
             self.notify(f"{e} (log: {log_path})", severity="error")
             loader.display = False
 
-    def _selected_repo(self) -> str | None:
+    def _selected_repo(self, *, notify: bool = True) -> str | None:
         repo_select = self.query_one("#repo-select", Select)
         if repo_select.value is Select.BLANK:
-            self.notify("请先选择 repo", severity="warning")
+            if notify:
+                self.notify("请先选择 repo", severity="warning")
             return None
         return str(repo_select.value)
 
@@ -179,9 +200,79 @@ class DiscoverScreen(Vertical):
 
     def _show_issues(self, issues) -> None:
         self._issues_by_number = {str(i.number): i for i in issues}
+        self._refresh_issue_table(focus=True)
+
+    def _refresh_issue_table(self, *, focus: bool = False) -> None:
         table = self.query_one(IssueTable)
-        table.populate(issues)
-        table.focus()
+        table.populate(self._filtered_issues())
+        if focus:
+            table.focus()
+        self._update_freshness_status()
+
+    def _filtered_issues(self):
+        issues = list(self._issues_by_number.values())
+        if self._action_filter == "all":
+            return issues
+        if self._action_filter == "packeted":
+            return [issue for issue in issues if self._pack_path_for_issue(issue) is not None]
+
+        expected_action = {
+            "do_now": "Do now",
+            "review": "Review",
+            "defer": "Defer",
+            "skip": "Skip",
+        }.get(self._action_filter)
+        if expected_action is None:
+            return issues
+        return [issue for issue in issues if recommended_action(issue) == expected_action]
+
+    def _set_action_filter(self, value: str) -> None:
+        valid_values = {filter_value for _, filter_value in self.ACTION_FILTERS}
+        if value not in valid_values:
+            value = "all"
+        self._action_filter = value
+        try:
+            filter_select = self.query_one("#action-filter", Select)
+            if filter_select.value != value:
+                filter_select.value = value
+        except Exception:
+            pass
+        self._refresh_issue_table()
+
+    def action_cycle_action_filter(self) -> None:
+        values = [filter_value for _, filter_value in self.ACTION_FILTERS]
+        current_index = values.index(self._action_filter) if self._action_filter in values else 0
+        self._set_action_filter(values[(current_index + 1) % len(values)])
+
+    def _filter_label(self) -> str:
+        labels = {value: label for label, value in self.ACTION_FILTERS}
+        return labels.get(self._action_filter, "All")
+
+    def _update_freshness_status(self) -> None:
+        status = self.query_one("#freshness-status", Static)
+        repo = self._selected_repo(notify=False)
+        visible_count = len(self._filtered_issues())
+        total_count = len(self._issues_by_number)
+        if total_count == 0:
+            status.update(f"Filter: {self._filter_label()} | No opportunities loaded")
+            return
+        if repo is None:
+            status.update(f"Filter: {self._filter_label()} | No repo selected")
+            return
+        try:
+            activity = self._cache().issue_activity(repo)
+        except Exception:
+            status.update(f"{visible_count} visible / {total_count} issues | Filter: {self._filter_label()}")
+            return
+        issue_count = activity["issue_count"] or total_count
+        fetched = activity["last_fetched_at"] or "never"
+        ranked = activity["last_ranked_at"] or "never"
+        unranked = activity["unranked_count"]
+        packets = activity["packet_count"]
+        status.update(
+            f"{visible_count} visible / {issue_count} issues | Filter: {self._filter_label()} | "
+            f"Last fetched: {fetched} | Last ranked: {ranked} | Unranked: {unranked} | Packets: {packets}"
+        )
 
     async def _fetch_from_github_and_score(self, repo: str) -> None:
         self._set_busy(f"  Updating {repo} from GitHub…")
@@ -237,7 +328,7 @@ class DiscoverScreen(Vertical):
                     resource_fit=scored.resource_fit,
                     actionability=scored.actionability,
                 )
-                self.query_one(IssueTable).populate(list(self._issues_by_number.values()))
+                self._refresh_issue_table()
 
             hint = self.query_one("#hint", Label)
             hint.update(
@@ -315,6 +406,7 @@ class DiscoverScreen(Vertical):
         self.query_one("#issue-detail-view").display = True
         self.query_one(IssueTable).can_focus = False
         self.query_one("#repo-select", Select).can_focus = False
+        self.query_one("#action-filter", Select).can_focus = False
         self.query_one("#issue-analysis-panel", Static).can_focus = True
         self.query_one("#issue-source-panel", Static).can_focus = True
         self.query_one("#hint", Label).update(
@@ -326,6 +418,7 @@ class DiscoverScreen(Vertical):
         self.query_one("#issue-detail-view").display = False
         self.query_one(IssueTable).can_focus = True
         self.query_one("#repo-select", Select).can_focus = True
+        self.query_one("#action-filter", Select).can_focus = True
         self.query_one("#issue-analysis-panel", Static).can_focus = False
         self.query_one("#issue-source-panel", Static).can_focus = False
 
@@ -377,6 +470,7 @@ class DiscoverScreen(Vertical):
             path = await asyncio.to_thread(lambda: self._library().write_issue_pack(issue))
             self._pack_paths_by_key[self._pack_key(issue)] = str(path)
             self.notify(f"Contribution Packet saved: {path}", timeout=5)
+            self._update_freshness_status()
         except Exception as e:
             log_path = log_exception(
                 self.app.config.notes_vault,
@@ -418,6 +512,7 @@ class DiscoverScreen(Vertical):
             )
             self._pack_paths_by_key[self._pack_key(issue)] = str(path)
             self.notify(f"Marked {decision}: {path}", timeout=5)
+            self._update_freshness_status()
         except Exception as e:
             log_path = log_exception(
                 self.app.config.notes_vault,

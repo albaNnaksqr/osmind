@@ -42,11 +42,13 @@ osmind solves this by:
 
 ## How it works
 
-osmind has three modes:
+osmind has four modes:
 
 ### Discover
 
 Turns open issues from your watched repos into an opportunity queue. Press `f` to open the current queue, `u` to update from GitHub and rank again, and `s` to re-rank with your current `profile.yaml` without calling GitHub. Each issue is scored by a local or remote LLM. The list leads with the recommended action and the reason, so a topic can be highly relevant but still be deferred if your configured GPUs or time budget make it hard to reproduce.
+
+The status line shows how many issues are visible, which action filter is active, when the repo was last fetched, when issues were last ranked, how many are still unranked, and how many already have packets. Press `a` to cycle the visible queue through `All`, `Do now`, `Review`, `Defer`, `Skip`, and `Packeted`.
 
 Open an issue detail view to see the recommendation and source evidence side by side. The left `Analysis` pane keeps the recommended action, resource explanation, next step, and continue/stop criteria visible; the right `Source` pane contains the Chinese summary, original issue text, and comments. Press `Tab` to switch panes. Press `g` on an issue to generate a Contribution Packet, or `o` to open an existing packet for the selected issue. Press `y`, `l`, or `n` to mark the selected issue as Continue, Defer, or Discard; osmind writes the decision to the packet frontmatter, appends it to the Decision Log, and updates the local index. Press `c` or `x` to launch **Claude Code** or **Codex** directly with the issue context pre-loaded.
 
@@ -57,6 +59,10 @@ Lists generated Contribution Packets from the local SQLite cache. You can open p
 ### Review
 
 osmind reads generated Contribution Packets and asks Socratic review questions. Your answers are appended back into the packet's `## Notes` section so the Markdown file remains the durable learning record. In Review, press `Delete` to remove the most recent saved Review answer from the current or selected packet.
+
+### Settings
+
+Shows the effective runtime health of the local setup: GitHub token presence, LLM endpoint and model, notes vault, cache path, configured resources, watched repos, and whether the external agent commands are on `PATH`.
 
 ## Installation
 
@@ -147,9 +153,11 @@ For the ranking and Socratic use case, a 7B–27B local model is sufficient.
 | `d` | Discover tab |
 | `p` | Packs tab |
 | `r` | Review tab |
+| `t` | Settings tab |
 | `f` | Open the current opportunity queue, fetching only if nothing is loaded yet (Discover) |
 | `u` | Update from GitHub and rank again (Discover) |
 | `s` | Re-rank with the current profile without calling GitHub (Discover) |
+| `a` | Cycle the Discover action filter |
 | `Tab` | Switch between Analysis and Source panes in issue detail (Discover) |
 | `g` | Generate Contribution Packet for selected issue (Discover) |
 | `o` | Open Contribution Packet for selected issue or selected packet |

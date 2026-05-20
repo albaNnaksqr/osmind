@@ -106,6 +106,36 @@ def test_cache_round_trips_issue_recommendation_dimensions(tmp_path: Path):
     assert cached[0].actionability == "low"
 
 
+def test_cache_reports_issue_fetch_and_rank_activity(tmp_path: Path):
+    store = CacheStore(tmp_path / "osmind.db")
+    issue = GHIssue(
+        number=42,
+        title="Tokenizer leak",
+        body="Body",
+        labels=["bug"],
+        url="https://github.com/o/r/issues/42",
+        repo="o/r",
+        state="open",
+        updated_at="u42",
+    )
+
+    store.upsert_issue(issue)
+    before_rank = store.issue_activity("o/r")
+
+    assert before_rank["issue_count"] == 1
+    assert before_rank["last_fetched_at"]
+    assert before_rank["last_ranked_at"] is None
+    assert before_rank["unranked_count"] == 1
+
+    store.update_issue_score("o/r", "issue", 42, 0.8, "ranked")
+    after_rank = store.issue_activity("o/r")
+
+    assert after_rank["issue_count"] == 1
+    assert after_rank["last_fetched_at"]
+    assert after_rank["last_ranked_at"]
+    assert after_rank["unranked_count"] == 0
+
+
 def test_cache_rolls_back_failed_item_write_before_pack_write(tmp_path: Path):
     store = CacheStore(tmp_path / "osmind.db")
 

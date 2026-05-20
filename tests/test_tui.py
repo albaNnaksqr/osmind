@@ -51,12 +51,14 @@ async def test_tab_navigation(mock_config):
         assert "switch_tab('discover')" in binding_actions
         assert "switch_tab('packs')" in binding_actions
         assert "switch_tab('review')" in binding_actions
+        assert "switch_tab('settings')" in binding_actions
         # Verify tab IDs exist in the TabbedContent
         tab_ids = {pane.id for pane in tabs.query("TabPane")}
         assert "discover" in tab_ids
         assert "packs" in tab_ids
         assert "learn" not in tab_ids
         assert "review" in tab_ids
+        assert "settings" in tab_ids
 
 
 @pytest.mark.asyncio
@@ -323,6 +325,74 @@ async def test_issue_table_shows_decision_oriented_recommendation_columns(temp_c
     assert row[0] == "Defer"
     assert row[1].startswith("resource blocked:")
     assert "当前 GPU 资源不足" in row[1]
+
+
+@pytest.mark.asyncio
+async def test_discover_action_filter_cycles_visible_recommendations(temp_config):
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    from osmind.tui.widgets.issue_list import IssueTable
+    from textual.widgets import Static
+
+    issues = [
+        GHIssue(1, "High match", "Body", [], "u1", "o/r", "open", score=0.9, reason="ready"),
+        GHIssue(
+            2,
+            "Resource blocked",
+            "Body",
+            [],
+            "u2",
+            "o/r",
+            "open",
+            score=0.2,
+            reason="needs bigger GPU",
+            priority="low",
+            fit="high",
+            resource_fit="blocked",
+            actionability="low",
+        ),
+        GHIssue(3, "Low match", "Body", [], "u3", "o/r", "open", score=0.1, reason="not relevant"),
+    ]
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        table = app.query_one(IssueTable)
+        discover._show_issues(issues)
+
+        assert table.row_count == 3
+
+        await pilot.press("a")
+        await pilot.pause()
+
+        assert table.row_count == 1
+        assert table.get_row_at(0)[0] == "Do now"
+        assert "Filter: Do now" in str(app.query_one("#freshness-status", Static).content)
+
+
+@pytest.mark.asyncio
+async def test_discover_freshness_status_shows_cached_fetch_and_rank_times(temp_config):
+    from osmind.cache.store import CacheStore
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    from textual.widgets import Static
+
+    issue = GHIssue(42, "Cached issue", "Body", [], "u42", "sgl-project/sglang", "open")
+    cache = CacheStore(temp_config.notes_vault / "osmind" / ".cache" / "osmind.db")
+    cache.upsert_issue(issue)
+    cache.update_issue_score(issue.repo, "issue", issue.number, 0.8, "cached score")
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        await discover.action_fetch()
+
+        status = str(app.query_one("#freshness-status", Static).content)
+
+    assert "1 issues" in status
+    assert "Last fetched:" in status
+    assert "Last ranked:" in status
+    assert "Filter: All" in status
 
 
 @pytest.mark.asyncio
@@ -1149,6 +1219,27 @@ async def test_review_screen_uses_contribution_packet_language(temp_config):
         labels = [str(label.content) for label in app.query(Label)]
 
     assert any("Contribution Packets" in label for label in labels)
+
+
+@pytest.mark.asyncio
+async def test_settings_screen_reports_runtime_health(temp_config):
+    from osmind.tui.screens.settings import SettingsScreen
+    from textual.widgets import Static
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        app.action_switch_tab("settings")
+        await pilot.pause()
+        settings = app.query_one(SettingsScreen)
+        settings.action_reload()
+
+        content = str(app.query_one("#settings-health", Static).content)
+
+    assert "GitHub token" in content
+    assert "LLM" in content
+    assert "Notes vault" in content
+    assert "Resources" in content
+    assert "4x RTX 4090" in content
 
 
 @pytest.mark.asyncio

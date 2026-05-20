@@ -10,6 +10,7 @@ from osmind.config import Config
 from osmind.tui.screens.discover import DiscoverScreen
 from osmind.tui.screens.packs import PacksScreen
 from osmind.tui.screens.review import ReviewScreen
+from osmind.tui.screens.settings import SettingsScreen
 from osmind.tui.widgets.issue_list import IssueTable
 
 
@@ -21,6 +22,7 @@ class OsmindApp(App):
         ("d", "switch_tab('discover')", "Discover"),
         ("p", "switch_tab('packs')", "Packs"),
         ("r", "switch_tab('review')", "Review"),
+        ("t", "switch_tab('settings')", "Settings"),
         ("escape", "leave_input", "Back"),
         ("q", "quit", "Quit"),
     ]
@@ -38,6 +40,8 @@ class OsmindApp(App):
                 yield PacksScreen()
             with TabPane("Review", id="review"):
                 yield ReviewScreen()
+            with TabPane("Settings", id="settings"):
+                yield SettingsScreen()
         yield Footer()
 
     def action_switch_tab(self, tab: str) -> None:
@@ -68,6 +72,8 @@ class OsmindApp(App):
                 self.query_one(PacksScreen).action_reload()
             elif tab == "review":
                 self.query_one(ReviewScreen).action_reload()
+            elif tab == "settings":
+                self.query_one(SettingsScreen).action_reload()
             self._focus_active_tab(tab)
         except NoMatches:
             return
@@ -82,6 +88,8 @@ class OsmindApp(App):
             self.query_one("#packs-table", DataTable).focus()
         elif tab == "review":
             self.query_one("#notes-table", DataTable).focus()
+        elif tab == "settings":
+            self.query_one("#settings-health").focus()
 
 
 def main():

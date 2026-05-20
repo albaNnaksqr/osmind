@@ -75,6 +75,7 @@ class CacheStore:
             "fit": "TEXT NOT NULL DEFAULT 'unknown'",
             "resource_fit": "TEXT NOT NULL DEFAULT 'unknown'",
             "actionability": "TEXT NOT NULL DEFAULT 'unknown'",
+            "ranked_at": "TEXT NOT NULL DEFAULT ''",
         }
         for column, definition in migrations.items():
             if column not in columns:
@@ -319,7 +320,8 @@ class CacheStore:
                     priority = ?,
                     fit = ?,
                     resource_fit = ?,
-                    actionability = ?
+                    actionability = ?,
+                    ranked_at = CURRENT_TIMESTAMP
                 WHERE repo = ? AND source_type = ? AND number = ?
                 """,
                 (score, reason, priority, fit, resource_fit, actionability, repo, source_type, number),
@@ -342,6 +344,35 @@ class CacheStore:
             (repo,),
         ).fetchall()
         return [_issue_from_row(row) for row in rows]
+
+    def issue_activity(self, repo: str) -> dict[str, Any]:
+        row = self._conn.execute(
+            """
+            SELECT
+                COUNT(*) AS issue_count,
+                MAX(fetched_at) AS last_fetched_at,
+                MAX(NULLIF(ranked_at, '')) AS last_ranked_at,
+                SUM(CASE WHEN NULLIF(ranked_at, '') IS NULL THEN 1 ELSE 0 END) AS unranked_count
+            FROM github_items
+            WHERE repo = ? AND source_type = 'issue'
+            """,
+            (repo,),
+        ).fetchone()
+        pack_row = self._conn.execute(
+            """
+            SELECT COUNT(*) AS packet_count
+            FROM packs
+            WHERE repo = ? AND source_type = 'issue'
+            """,
+            (repo,),
+        ).fetchone()
+        return {
+            "issue_count": int(row["issue_count"] or 0),
+            "last_fetched_at": row["last_fetched_at"],
+            "last_ranked_at": row["last_ranked_at"],
+            "unranked_count": int(row["unranked_count"] or 0),
+            "packet_count": int(pack_row["packet_count"] or 0),
+        }
 
     def upsert_pack(
         self,
