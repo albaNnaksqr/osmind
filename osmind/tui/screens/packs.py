@@ -4,12 +4,13 @@ import asyncio
 from pathlib import Path
 
 from textual.app import ComposeResult
-from textual.containers import Vertical
-from textual.widgets import DataTable, Label, Static
+from textual.containers import Horizontal, Vertical
+from textual.widgets import DataTable, Label, Markdown, Static
 
 from osmind.logs import log_exception
 from osmind.packs.opener import open_path
 from osmind.services.library import PackLibrary
+from osmind.tui.packet_reader import packet_outline, packet_section_markdown
 from osmind.tui.lifecycle import resources_hash
 from osmind.tui.suspend import suspend_if_supported
 from osmind.tui.workflow import format_start_work_from_packet
@@ -18,10 +19,15 @@ from osmind.tui.workflow import format_start_work_from_packet
 class PacksScreen(Vertical):
     DEFAULT_CSS = """
     PacksScreen #packs-list-view { height: 1fr; }
+    PacksScreen #packet-reader-view { display: none; height: 1fr; }
+    PacksScreen #packet-reader-body { height: 1fr; }
+    PacksScreen #packet-section-table { width: 32; height: 1fr; border-right: solid $panel; }
+    PacksScreen #packet-markdown { width: 1fr; height: 1fr; padding: 0 1; }
     PacksScreen #pack-start-work-view { display: none; height: 1fr; }
     PacksScreen #pack-start-work-panel { height: 1fr; padding: 0 1; overflow-y: auto; }
     """
     BINDINGS = [
+        ("enter", "view_pack", "Read Packet"),
         ("o", "open_pack", "Open Packet"),
         ("w", "start_work", "Start Work"),
         ("y", "mark_continue", "Continue"),
@@ -35,7 +41,12 @@ class PacksScreen(Vertical):
         with Vertical(id="packs-list-view"):
             yield Label("[bold]Contribution Packets[/bold]", markup=True)
             yield DataTable(id="packs-table", cursor_type="row")
-            yield Label("[dim]o: open  w: start work  y/l/n: continue/defer/discard  u: reload  r: review[/dim]", markup=True)
+            yield Label("[dim]Enter: read  o: open  w: start work  y/l/n: continue/defer/discard  u: reload  r: review[/dim]", markup=True)
+        with Vertical(id="packet-reader-view"):
+            yield Static("[dim]↑↓ 选择 section。Esc 返回列表。o 外部打开。w Start Work。[/dim]", id="packet-reader-hint")
+            with Horizontal(id="packet-reader-body"):
+                yield DataTable(id="packet-section-table", cursor_type="row")
+                yield Markdown("", id="packet-markdown")
         with Vertical(id="pack-start-work-view"):
             yield Static("[dim]Esc 返回列表。o 打开 Packet。[/dim]", id="pack-start-work-hint")
             yield Static("", id="pack-start-work-panel")
@@ -52,6 +63,10 @@ class PacksScreen(Vertical):
             ("Path", "path"),
         )
         self._packs_by_key: dict[str, dict] = {}
+        section_table = self.query_one("#packet-section-table", DataTable)
+        section_table.add_columns("Section")
+        self._reader_markdown = ""
+        self._reader_pack = None
 
     def _library(self) -> PackLibrary:
         cache_path = self.app.config.notes_vault / "osmind" / ".cache" / "osmind.db"
@@ -95,6 +110,28 @@ class PacksScreen(Vertical):
         with suspend_if_supported(self.app):
             open_path(Path(pack["path"]))
 
+    def action_view_pack(self) -> None:
+        pack = self._selected_pack()
+        if pack is None:
+            return
+        try:
+            markdown = Path(pack["path"]).read_text(encoding="utf-8")
+            self._reader_markdown = markdown
+            self._reader_pack = pack
+            section_table = self.query_one("#packet-section-table", DataTable)
+            section_table.clear()
+            for idx, section in enumerate(packet_outline(markdown)):
+                section_table.add_row(section.title, key=str(idx))
+            section_table.cursor_coordinate = (0, 0)
+            self._show_packet_section(0)
+            self._show_packet_reader()
+        except Exception as e:
+            log_path = log_exception(
+                self.app.config.notes_vault,
+                f"Failed to read Contribution Packet for {pack['repo']}#{pack['number']}",
+            )
+            self.notify(f"{e} (log: {log_path})", severity="error")
+
     def action_start_work(self) -> None:
         pack = self._selected_pack()
         if pack is None:
@@ -112,18 +149,37 @@ class PacksScreen(Vertical):
             self.notify(f"{e} (log: {log_path})", severity="error")
 
     def action_back_to_list(self) -> None:
-        if not self.query_one("#pack-start-work-view").display:
+        if not self.query_one("#pack-start-work-view").display and not self.query_one("#packet-reader-view").display:
             return
         self.query_one("#packs-list-view").display = True
+        self.query_one("#packet-reader-view").display = False
         self.query_one("#pack-start-work-view").display = False
         self.query_one("#packs-table", DataTable).focus()
 
+    def _show_packet_reader(self) -> None:
+        self.query_one("#packs-list-view").display = False
+        self.query_one("#packet-reader-view").display = True
+        self.query_one("#pack-start-work-view").display = False
+        self.query_one("#packet-section-table", DataTable).focus()
+
     def _show_start_work(self) -> None:
         self.query_one("#packs-list-view").display = False
+        self.query_one("#packet-reader-view").display = False
         self.query_one("#pack-start-work-view").display = True
         panel = self.query_one("#pack-start-work-panel", Static)
         panel.can_focus = True
         panel.focus()
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        if event.data_table.id != "packet-section-table":
+            return
+        try:
+            self._show_packet_section(int(event.row_key.value))
+        except (TypeError, ValueError):
+            return
+
+    def _show_packet_section(self, index: int) -> None:
+        self.query_one("#packet-markdown", Markdown).update(packet_section_markdown(self._reader_markdown, index))
 
     async def _mark_selected_pack_decision(self, decision: str) -> None:
         pack = self._selected_pack()

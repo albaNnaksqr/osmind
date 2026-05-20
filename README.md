@@ -54,7 +54,7 @@ Open an issue detail view to see the recommendation and source evidence side by 
 
 ### Packs
 
-Lists generated Contribution Packets from the local SQLite cache. You can open packets, inspect their status, decision, and confidence, mark Continue/Defer/Discard decisions, and regenerate material when the source item changes. Press `w` on a packet to open Start Work, which extracts the first 10 minutes, files/symbols, validation path, continue/stop criteria, and agent prompt into one execution-focused view.
+Lists generated Contribution Packets from the local SQLite cache. You can inspect their status, decision, and confidence, mark Continue/Defer/Discard decisions, and regenerate material when the source item changes. Press `Enter` to read a packet inside the TUI with a section list and rendered Markdown, `o` to open the Markdown file externally, or `w` to open Start Work, which extracts the first 10 minutes, files/symbols, validation path, continue/stop criteria, and agent prompt into one execution-focused view.
 
 ### Review
 
@@ -160,6 +160,7 @@ For the ranking and Socratic use case, a 7B–27B local model is sufficient.
 | `a` | Cycle the Discover action filter |
 | `Tab` | Switch between Analysis and Source panes in issue detail (Discover) |
 | `g` | Generate Contribution Packet for selected issue (Discover) |
+| `Enter` | Read the selected Contribution Packet in the TUI (Packs) |
 | `w` | Open Start Work for the selected issue or packet |
 | `o` | Open Contribution Packet for selected issue or selected packet |
 | `y` | Mark selected issue or packet as Continue |

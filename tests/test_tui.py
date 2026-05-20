@@ -170,6 +170,16 @@ def test_start_work_key_does_not_shadow_review_navigation_key():
     assert start_work_keys.isdisjoint(review_keys)
 
 
+def test_packs_reader_reuses_enter_without_extra_view_keys():
+    from osmind.tui.screens.packs import PacksScreen
+
+    keys_by_action = {binding[1]: binding[0] for binding in PacksScreen.BINDINGS}
+
+    assert keys_by_action["view_pack"] == "enter"
+    assert "v" not in {binding[0] for binding in PacksScreen.BINDINGS}
+    assert "m" not in {binding[0] for binding in PacksScreen.BINDINGS}
+
+
 @pytest.mark.asyncio
 async def test_discover_fetch_exception_is_logged(temp_config, monkeypatch):
     from osmind.tui.screens.discover import DiscoverScreen
@@ -862,6 +872,58 @@ async def test_packs_open_empty_table_does_not_crash(temp_config, monkeypatch):
         app.query_one("PacksScreen").action_open_pack()
 
     assert opened == []
+
+
+@pytest.mark.asyncio
+async def test_packs_enter_opens_packet_reader_without_new_shortcut_sprawl(temp_config):
+    from osmind.github.models import GHPR
+    from osmind.services.library import PackLibrary
+    from textual.widgets import DataTable, Markdown
+
+    library = PackLibrary(
+        temp_config.notes_vault,
+        temp_config.notes_vault / "osmind" / ".cache" / "osmind.db",
+    )
+    library.write_pr_pack(
+        GHPR(
+            number=4,
+            title="Readable Pack",
+            body="Packet body.",
+            url="https://github.com/o/r/pull/4",
+            repo="o/r",
+            updated_at="u4",
+        )
+    )
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        app.action_switch_tab("packs")
+        await pilot.pause()
+        packs_table = app.query_one("#packs-table", DataTable)
+        packs_table.cursor_coordinate = (0, 0)
+
+        app.query_one("PacksScreen").action_view_pack()
+
+        section_table = app.query_one("#packet-section-table", DataTable)
+        markdown = app.query_one("#packet-markdown", Markdown)
+
+        assert app.query_one("#packs-list-view").display is False
+        assert app.query_one("#packet-reader-view").display is True
+        assert section_table.row_count >= 3
+        assert "# PR #4: Readable Pack" in markdown.source
+
+        first_ten_index = next(
+            index
+            for index in range(section_table.row_count)
+            if section_table.get_row_at(index)[0] == "First 10 Minutes"
+        )
+        section_table.cursor_coordinate = (first_ten_index, 0)
+        app.query_one("PacksScreen").on_data_table_row_highlighted(
+            DataTable.RowHighlighted(section_table, first_ten_index, section_table.ordered_rows[first_ten_index].key)
+        )
+        await pilot.pause()
+
+        assert markdown.source.startswith("## First 10 Minutes")
 
 
 @pytest.mark.asyncio
