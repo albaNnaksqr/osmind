@@ -230,6 +230,22 @@ def test_write_issue_pack_creates_markdown_and_cache_record(tmp_path):
     assert packs[0]["confidence"] == "unknown"
 
 
+def test_write_issue_pack_includes_configured_resources_in_recommendation_snapshot(tmp_path):
+    notes_vault = tmp_path / "notes"
+    cache_path = tmp_path / "cache" / "osmind.db"
+    issue = _issue()
+    issue.resource_fit = "blocked"
+    issue.reason = "主题匹配，但当前 GPU 资源不足以复现"
+    library = PackLibrary(notes_vault, cache_path, resources={"gpus": "4x RTX 4090"})
+
+    path = library.write_issue_pack(issue)
+
+    markdown = path.read_text(encoding="utf-8")
+    assert "## Recommendation Snapshot" in markdown
+    assert "| Resource Fit | Blocked |" in markdown
+    assert "| Configured Resources | gpus: 4x RTX 4090 |" in markdown
+
+
 def test_write_issue_pack_reuses_cached_path_and_preserves_user_content_on_retitle(tmp_path):
     notes_vault = tmp_path / "notes"
     cache_path = tmp_path / "cache" / "osmind.db"

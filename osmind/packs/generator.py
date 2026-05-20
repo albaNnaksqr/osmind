@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from osmind.decision import format_decision_markdown
 from osmind.github.models import GHIssue, GHPR, PRFile
 from osmind.packs.models import LearningPack, PackSection, SourceRef
 
@@ -55,7 +56,7 @@ class PackGenerator:
         )
 
     @staticmethod
-    def from_issue(issue: GHIssue) -> LearningPack:
+    def from_issue(issue: GHIssue, resources: dict | None = None) -> LearningPack:
         source = SourceRef(
             source_type="issue",
             repo=issue.repo,
@@ -66,6 +67,7 @@ class PackGenerator:
         )
         sections = [
             PackSection("What This Is", _issue_what_this_is(issue)),
+            PackSection("Recommendation Snapshot", format_decision_markdown(issue, resources)),
             PackSection("Why It May Fit You", _why_issue_may_fit(issue)),
             PackSection("Continue Or Stop Criteria", _issue_continue_stop_criteria(issue)),
             PackSection("First 10 Minutes", _issue_first_ten_minutes(issue)),

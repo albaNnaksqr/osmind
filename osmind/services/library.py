@@ -20,10 +20,11 @@ MAX_SLUG_LENGTH = 80
 
 
 class PackLibrary:
-    def __init__(self, notes_vault: Path, cache_path: Path):
+    def __init__(self, notes_vault: Path, cache_path: Path, resources: dict | None = None):
         self.notes_vault = notes_vault
         self.cache = CacheStore(cache_path)
         self.generator = PackGenerator()
+        self.resources = resources or {}
 
     def write_pr_pack(self, pr: GHPR) -> Path:
         pack = self.generator.from_pr(pr)
@@ -31,7 +32,7 @@ class PackLibrary:
         return self._write_pack(path, pr.repo, "pr", pr.number, pack)
 
     def write_issue_pack(self, issue: GHIssue) -> Path:
-        pack = self.generator.from_issue(issue)
+        pack = self.generator.from_issue(issue, resources=self.resources)
         path = self._existing_pack_path(issue.repo, "issue", issue.number) or self._issue_pack_path(issue)
         return self._write_pack(path, issue.repo, "issue", issue.number, pack)
 

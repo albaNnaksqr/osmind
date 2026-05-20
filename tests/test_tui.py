@@ -678,7 +678,9 @@ async def test_discover_view_issue_separates_analysis_from_source(temp_config, m
         analysis = app.query_one("#issue-analysis-panel", Static).content
         source = app.query_one("#issue-source-panel", Static).content
 
-    assert "推荐动作" in str(analysis)
+    assert "Recommendation" in str(analysis)
+    assert "Decision Factors" in str(analysis)
+    assert "Evidence" in str(analysis)
     assert "继续/放弃判断" in str(analysis)
     assert "Continue" in str(analysis)
     assert "Stop" in str(analysis)
@@ -805,15 +807,18 @@ def test_issue_analysis_shows_recommendation_dimensions():
 
     detail = _format_issue_analysis(issue, resources={"gpus": "4x RTX 4090"})
 
-    assert "推荐动作" in detail
+    assert "Recommendation" in detail
     assert "Action: Defer" in detail
     assert "Why: resource blocked" in detail
-    assert "Next: Defer until the required environment is available." in detail
+    assert "Next Step: Defer until the required environment is available." in detail
+    assert "Decision Factors" in detail
     assert "Priority: Low" in detail
-    assert "Fit: Hi" in detail
+    assert "Fit: High" in detail
     assert "Resource Fit: Blocked" in detail
     assert "Actionability: Low" in detail
-    assert "用户资源: gpus: 4x RTX 4090" in detail
+    assert "Configured Resources: gpus: 4x RTX 4090" in detail
+    assert "Evidence" in detail
+    assert "- LLM: 主题匹配，但当前 GPU 资源不足以复现" in detail
 
 
 @pytest.mark.asyncio

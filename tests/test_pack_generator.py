@@ -183,6 +183,7 @@ def test_from_issue_includes_required_sections_and_issue_context():
     assert pack.source.updated_at == "2026-05-16T01:02:03+00:00"
     assert list(sections) == [
         "What This Is",
+        "Recommendation Snapshot",
         "Why It May Fit You",
         "Continue Or Stop Criteria",
         "First 10 Minutes",
@@ -198,6 +199,8 @@ def test_from_issue_includes_required_sections_and_issue_context():
     ]
     assert "Tokenizer leak" in sections["Why It May Fit You"]
     assert "bug, tokenizer" in sections["Why It May Fit You"]
+    assert "| Action |" in sections["Recommendation Snapshot"]
+    assert "| Resource Fit |" in sections["Recommendation Snapshot"]
     assert "Long sequences leak memory." in sections["Known Facts"]
     assert "maintainer" in sections["Missing Context"]
     assert "tokenizer cache" in sections["Missing Context"]
@@ -226,3 +229,28 @@ def test_from_issue_uses_discover_recommendation_reason_in_fit_section():
     sections = {section.title: section.body for section in pack.sections}
 
     assert "涉及 tokenizer cache" in sections["Why It May Fit You"]
+
+
+def test_from_issue_can_include_resource_aware_recommendation_snapshot():
+    issue = GHIssue(
+        number=42,
+        title="DeepSeek V4Pro reproduction fails",
+        body="Requires full model reproduction.",
+        labels=["bug"],
+        url="https://github.com/o/r/issues/42",
+        repo="o/r",
+        state="open",
+        reason="主题匹配，但当前 GPU 资源不足以复现",
+        priority="low",
+        fit="high",
+        resource_fit="blocked",
+        actionability="low",
+    )
+
+    pack = PackGenerator().from_issue(issue, resources={"gpus": "4x RTX 4090"})
+    sections = {section.title: section.body for section in pack.sections}
+
+    assert "| Action | Defer |" in sections["Recommendation Snapshot"]
+    assert "| Why | resource blocked |" in sections["Recommendation Snapshot"]
+    assert "| Resource Fit | Blocked |" in sections["Recommendation Snapshot"]
+    assert "| Configured Resources | gpus: 4x RTX 4090 |" in sections["Recommendation Snapshot"]

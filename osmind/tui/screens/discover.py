@@ -5,10 +5,11 @@ from pathlib import Path
 from textual.app import ComposeResult
 from textual.widgets import Label, LoadingIndicator, Select, Static
 from textual.containers import Vertical, Horizontal
+from osmind.decision import format_decision_panel
 from osmind.logs import log_exception
 from osmind.packs.opener import open_path
 from osmind.tui.lifecycle import resources_hash
-from osmind.tui.recommendation import action_reason, next_step_for_action, recommended_action
+from osmind.tui.recommendation import action_reason, recommended_action
 from osmind.tui.suspend import suspend_if_supported
 from osmind.tui.widgets.issue_list import IssueTable
 from osmind.tui.workflow import format_start_work_from_packet
@@ -498,7 +499,7 @@ class DiscoverScreen(Vertical):
         from osmind.services.library import PackLibrary
 
         cache_path = self.app.config.notes_vault / "osmind" / ".cache" / "osmind.db"
-        return PackLibrary(self.app.config.notes_vault, cache_path)
+        return PackLibrary(self.app.config.notes_vault, cache_path, resources=self.app.config.resources)
 
     def _cache(self):
         from osmind.cache.store import CacheStore
@@ -669,7 +670,7 @@ def _format_issue_analysis(issue, resources: dict | None = None) -> str:
     criteria = _issue_continue_stop_criteria(issue)
     return (
         "[bold]Analysis[/bold]\n\n"
-        f"[bold]推荐动作[/bold]\n{_format_recommendation(issue, resources)}\n\n"
+        f"{format_decision_panel(issue, resources)}\n\n"
         f"[bold]继续/放弃判断[/bold]\n{criteria}"
     )
 
@@ -692,54 +693,6 @@ def _format_issue_source(issue, summary: str) -> str:
 
 def _format_issue_detail(issue, summary: str, resources: dict | None = None) -> str:
     return f"{_format_issue_analysis(issue, resources)}\n\n{_format_issue_source(issue, summary)}"
-
-
-def _format_recommendation(issue, resources: dict | None = None) -> str:
-    action = recommended_action(issue)
-    why = action_reason(issue)
-    next_step = next_step_for_action(action)
-    priority = _display_dimension(getattr(issue, "priority", "unknown"), kind="priority", score=getattr(issue, "score", 0.0))
-    fit = _display_dimension(getattr(issue, "fit", "unknown"))
-    resource_fit = _display_dimension(getattr(issue, "resource_fit", "unknown"), kind="resource")
-    actionability = _display_dimension(getattr(issue, "actionability", "unknown"))
-    resources_text = _format_resources(resources or {})
-    reason = getattr(issue, "reason", "") or "评分尚未产生推荐理由。"
-    return (
-        f"Action: {action}\n"
-        f"Why: {why}\n"
-        f"Next: {next_step}\n"
-        f"Priority: {priority}\n"
-        f"Fit: {fit}\n"
-        f"Resource Fit: {resource_fit}\n"
-        f"Actionability: {actionability}\n"
-        f"用户资源: {resources_text}\n"
-        f"Reason: {reason}"
-    )
-
-
-def _format_resources(resources: dict) -> str:
-    if not resources:
-        return "unspecified"
-    return ", ".join(f"{key}: {value}" for key, value in resources.items())
-
-
-def _display_dimension(value: str, *, kind: str = "level", score: float = 0.0) -> str:
-    normalized = str(value or "unknown").lower()
-    if kind == "priority" and normalized == "unknown":
-        if score >= 0.7:
-            normalized = "high"
-        elif score >= 0.4:
-            normalized = "medium"
-    labels = {
-        "high": "Hi" if kind != "priority" else "High",
-        "medium": "Med",
-        "low": "Low",
-        "ok": "OK",
-        "risk": "Risk",
-        "blocked": "Blocked",
-        "unknown": "--",
-    }
-    return labels.get(normalized, "--")
 
 
 def _issue_continue_stop_criteria(issue) -> str:
