@@ -24,7 +24,7 @@ class OsmindApp(App):
         ("r", "switch_tab('review')", "Review"),
         ("t", "switch_tab('settings')", "Settings"),
         ("escape", "leave_input", "Back"),
-        ("q", "quit", "Quit"),
+        ("ctrl+q", "quit", "Quit"),
     ]
 
     def __init__(self, config: Config):
@@ -62,9 +62,52 @@ class OsmindApp(App):
         else:
             self.set_focus(None)
 
+    def on_key(self, event) -> None:
+        if event.key != "q" or isinstance(self.focused, Input):
+            return
+        if self._context_back():
+            event.prevent_default()
+            event.stop()
+
+    def _context_back(self) -> bool:
+        try:
+            active_tab = self.query_one(TabbedContent).active
+            if active_tab == "discover" and self._discover_back_if_open():
+                return True
+            if active_tab == "packs" and self._packs_back_if_open():
+                return True
+            return self._discover_back_if_open() or self._packs_back_if_open()
+        except NoMatches:
+            return False
+
+    def _discover_back_if_open(self) -> bool:
+        discover = self.query_one(DiscoverScreen)
+        if (
+            discover.query_one("#issue-detail-view").display
+            or discover.query_one("#start-work-view").display
+        ):
+            discover.action_back_to_list()
+            return True
+        return False
+
+    def _packs_back_if_open(self) -> bool:
+        packs = self.query_one(PacksScreen)
+        if (
+            packs.query_one("#packet-reader-view").display
+            or packs.query_one("#pack-start-work-view").display
+        ):
+            packs.action_back_to_list()
+            return True
+        return False
+
     def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
         if event.pane.id:
-            self.call_after_refresh(lambda: self._activate_tab(event.pane.id))
+            self.call_after_refresh(lambda pane_id=event.pane.id: self._activate_tab_if_current(pane_id))
+
+    def _activate_tab_if_current(self, tab: str) -> None:
+        if self.query_one(TabbedContent).active != tab:
+            return
+        self._activate_tab(tab)
 
     def _activate_tab(self, tab: str) -> None:
         try:

@@ -10,6 +10,7 @@ from pathlib import Path
 import yaml
 
 from osmind.cache.store import CacheStore
+from osmind.engine.issue_brief import IssueBrief
 from osmind.github.models import GHIssue, GHPR
 from osmind.packs.generator import PackGenerator
 from osmind.packs.models import VALID_PACK_DECISIONS
@@ -31,8 +32,8 @@ class PackLibrary:
         path = self._existing_pack_path(pr.repo, "pr", pr.number) or self._pr_pack_path(pr)
         return self._write_pack(path, pr.repo, "pr", pr.number, pack)
 
-    def write_issue_pack(self, issue: GHIssue) -> Path:
-        pack = self.generator.from_issue(issue, resources=self.resources)
+    def write_issue_pack(self, issue: GHIssue, brief: IssueBrief | None = None) -> Path:
+        pack = self.generator.from_issue(issue, resources=self.resources, brief=brief)
         path = self._existing_pack_path(issue.repo, "issue", issue.number) or self._issue_pack_path(issue)
         return self._write_pack(path, issue.repo, "issue", issue.number, pack)
 

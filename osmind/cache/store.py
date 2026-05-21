@@ -76,6 +76,7 @@ class CacheStore:
             "resource_fit": "TEXT NOT NULL DEFAULT 'unknown'",
             "actionability": "TEXT NOT NULL DEFAULT 'unknown'",
             "ranked_at": "TEXT NOT NULL DEFAULT ''",
+            "brief_json": "TEXT NOT NULL DEFAULT ''",
         }
         for column, definition in migrations.items():
             if column not in columns:
@@ -284,6 +285,12 @@ class CacheStore:
                 VALUES (?, 'issue', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(repo, source_type, number) DO UPDATE SET
                     title = excluded.title,
+                    brief_json = CASE
+                        WHEN github_items.body_hash != excluded.body_hash
+                            OR github_items.content_hash != excluded.content_hash
+                        THEN ''
+                        ELSE github_items.brief_json
+                    END,
                     body_hash = excluded.body_hash,
                     content_hash = excluded.content_hash,
                     state = excluded.state,
@@ -347,6 +354,34 @@ class CacheStore:
         except Exception:
             self._conn.rollback()
             raise
+
+    def update_issue_brief(self, repo: str, number: int, brief_json: str) -> None:
+        try:
+            self._conn.execute(
+                """
+                UPDATE github_items
+                SET brief_json = ?
+                WHERE repo = ? AND source_type = 'issue' AND number = ?
+                """,
+                (brief_json, repo, number),
+            )
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
+
+    def get_issue_brief(self, repo: str, number: int) -> str:
+        row = self._conn.execute(
+            """
+            SELECT brief_json
+            FROM github_items
+            WHERE repo = ? AND source_type = 'issue' AND number = ?
+            """,
+            (repo, number),
+        ).fetchone()
+        if row is None:
+            return ""
+        return str(row["brief_json"] or "")
 
     def list_issues(self, repo: str) -> list[GHIssue]:
         rows = self._conn.execute(

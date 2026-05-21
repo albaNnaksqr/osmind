@@ -106,6 +106,144 @@ def test_cache_round_trips_issue_recommendation_dimensions(tmp_path: Path):
     assert cached[0].actionability == "low"
 
 
+def test_cache_round_trips_issue_brief(tmp_path: Path):
+    store = CacheStore(tmp_path / "osmind.db")
+    issue = GHIssue(
+        number=42,
+        title="Tokenizer leak",
+        body="The tokenizer cache keeps growing.",
+        labels=["bug"],
+        url="https://github.com/o/r/issues/42",
+        repo="o/r",
+        state="open",
+        updated_at="u42",
+    )
+    brief_json = '{"summary": "Tokenizer cache grows without bounds."}'
+
+    store.upsert_issue(issue)
+    store.update_issue_brief("o/r", 42, brief_json)
+
+    assert store.get_issue_brief("o/r", 42) == brief_json
+
+
+def test_cache_preserves_issue_brief_for_identical_issue_refresh(tmp_path: Path):
+    store = CacheStore(tmp_path / "osmind.db")
+    issue = GHIssue(
+        number=42,
+        title="Tokenizer leak",
+        body="The tokenizer cache keeps growing.",
+        labels=["bug"],
+        url="https://github.com/o/r/issues/42",
+        repo="o/r",
+        state="open",
+        updated_at="u42",
+    )
+    refreshed_issue = GHIssue(
+        number=42,
+        title="Tokenizer leak",
+        body="The tokenizer cache keeps growing.",
+        labels=["bug"],
+        url="https://github.com/o/r/issues/42",
+        repo="o/r",
+        state="open",
+        updated_at="u43",
+    )
+    brief_json = '{"summary": "Tokenizer cache grows without bounds."}'
+
+    store.upsert_issue(issue)
+    store.update_issue_brief("o/r", 42, brief_json)
+    store.upsert_issue(refreshed_issue)
+
+    assert store.get_issue_brief("o/r", 42) == brief_json
+
+
+def test_cache_clears_issue_brief_when_issue_body_changes(tmp_path: Path):
+    store = CacheStore(tmp_path / "osmind.db")
+    issue = GHIssue(
+        number=42,
+        title="Tokenizer leak",
+        body="The tokenizer cache keeps growing.",
+        labels=["bug"],
+        url="https://github.com/o/r/issues/42",
+        repo="o/r",
+        state="open",
+        updated_at="u42",
+    )
+    changed_issue = GHIssue(
+        number=42,
+        title="Tokenizer leak",
+        body="The tokenizer cache was fixed.",
+        labels=["bug"],
+        url="https://github.com/o/r/issues/42",
+        repo="o/r",
+        state="open",
+        updated_at="u43",
+    )
+
+    store.upsert_issue(issue)
+    store.update_issue_brief("o/r", 42, '{"summary": "Old brief."}')
+    store.upsert_issue(changed_issue)
+
+    assert store.get_issue_brief("o/r", 42) == ""
+
+
+def test_cache_returns_empty_issue_brief_for_missing_issue(tmp_path: Path):
+    store = CacheStore(tmp_path / "osmind.db")
+
+    assert store.get_issue_brief("o/r", 404) == ""
+
+
+def test_cache_migrates_existing_github_items_with_issue_brief_column(tmp_path: Path):
+    db_path = tmp_path / "osmind.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE github_items (
+            repo TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            number INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            body_hash TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            state TEXT NOT NULL,
+            url TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            fetched_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            body TEXT NOT NULL DEFAULT '',
+            labels_json TEXT NOT NULL DEFAULT '[]',
+            comments_json TEXT NOT NULL DEFAULT '[]',
+            score REAL NOT NULL DEFAULT 0,
+            reason TEXT NOT NULL DEFAULT '',
+            priority TEXT NOT NULL DEFAULT 'unknown',
+            fit TEXT NOT NULL DEFAULT 'unknown',
+            resource_fit TEXT NOT NULL DEFAULT 'unknown',
+            actionability TEXT NOT NULL DEFAULT 'unknown',
+            ranked_at TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (repo, source_type, number)
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO github_items
+            (
+                repo, source_type, number, title, body_hash, content_hash,
+                state, url, updated_at, body
+            )
+        VALUES (?, 'issue', ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("o/r", 42, "Tokenizer leak", "body1", "comments1", "open", "url", "u42", "Body"),
+    )
+    conn.commit()
+    conn.close()
+
+    store = CacheStore(db_path)
+
+    columns = {row["name"] for row in store._conn.execute("PRAGMA table_info(github_items)").fetchall()}
+    assert "brief_json" in columns
+    assert store.get_issue_brief("o/r", 42) == ""
+
+
 def test_cache_reports_issue_fetch_and_rank_activity(tmp_path: Path):
     store = CacheStore(tmp_path / "osmind.db")
     issue = GHIssue(

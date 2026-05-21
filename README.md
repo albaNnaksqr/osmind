@@ -6,7 +6,7 @@ It watches GitHub repositories you care about, recommends PRs and issues that ma
 
 ```
 ┌─ osmind ─────────────────────────────────────────────────────┐
-│ [Discover]  [Packs]  [Review]                      q: Quit   │
+│ [Discover]  [Packs]  [Review]                   Ctrl+Q: Quit │
 ├──────────────────────────────────────────────────────────────┤
 │ Repo: sgl-project/sglang              Filter: all  ▼         │
 │                                                              │
@@ -33,10 +33,10 @@ osmind solves this by:
 
 1. Configure watched repositories in `profile.yaml`.
 2. Run `osmind`.
-3. Use Discover to open your opportunity queue, update from GitHub, or re-rank with your current profile.
-4. Press `g` to generate a Contribution Packet.
-5. Press `o` to open the packet in your editor or Obsidian.
-6. Press `y`, `l`, or `n` to mark Continue, Defer, or Discard.
+3. Use Discover to review the cached opportunity queue, or press `u` to choose between reading cache and fetching fresh GitHub data.
+4. Press `Enter` to inspect an issue, then press `w` when you want to start work; osmind generates or updates the Contribution Packet and marks it Continue.
+5. Press `Space` when you want to remove an item from the active queue as Defer or Discard.
+6. Press `o` to open the packet in your editor or Obsidian.
 7. Read the pack alongside GitHub or a local checkout.
 8. Use Packs and Review to revisit generated material.
 
@@ -46,15 +46,15 @@ osmind has four modes:
 
 ### Discover
 
-Turns open issues from your watched repos into an opportunity queue. Press `f` to open the current queue, `u` to update from GitHub and rank again, and `s` to re-rank with your current `profile.yaml` without calling GitHub. Each issue is scored by a local or remote LLM. The list leads with the recommended action and the reason, so a topic can be highly relevant but still be deferred if your configured GPUs or time budget make it hard to reproduce.
+Turns open issues from your watched repos into an opportunity queue. Discover shows the cached queue when it exists; press `u` to choose `Read Cache` or `Fetch + Rank`. If there is no cache for the selected repo, `u` fetches from GitHub directly. Each issue is scored by a local or remote LLM. The list leads with the recommended action and the reason, so a topic can be highly relevant but still be deferred if your configured GPUs or time budget make it hard to reproduce.
 
 The default Discover queue is `Active`: issues you have not deferred or discarded, plus previously deferred/discarded issues whose upstream content or configured resources changed. The status line shows how many issues are visible, which action filter is active, when the repo was last fetched, when issues were last ranked, how many are still unranked, how many already have packets, and how many items are deferred, discarded, or changed. Press `a` to cycle the visible queue through `Active`, `Do now`, `Review`, `Rec Defer`, `Skip`, `Packeted`, `Deferred`, `Discarded`, `Changed`, and `All`.
 
-Open an issue detail view to see the recommendation and source evidence side by side. The left `Analysis` pane starts with a structured decision panel: `Recommendation`, `Decision Factors`, and `Evidence` show the action, reason tag, next step, priority, fit, resource fit, actionability, configured resources, and source signals before the continue/stop criteria. The right `Source` pane contains the Chinese summary, original issue text, and comments. Press `Tab` to switch panes. Press `g` on an issue to generate a Contribution Packet, `w` to open the Start Work panel, or `o` to open an existing packet for the selected issue. Press `y`, `l`, or `n` to mark the selected issue as Continue, Defer, or Discard; osmind writes the decision to the packet frontmatter, appends it to the Decision Log, records the current resource profile, and updates the local index. Deferred and discarded issues leave the Active queue until GitHub updates the issue or your `resources` config changes. Press `c` or `x` to launch **Claude Code** or **Codex** directly with the issue context pre-loaded.
+Open an issue detail view to see the recommendation and source evidence side by side. The left `Analysis` pane starts with a structured decision panel: `Recommendation`, `Decision Factors`, and `Evidence` show the action, reason tag, next step, priority, fit, resource fit, actionability, configured resources, and source signals before the continue/stop criteria. The right `Source` pane contains the Chinese summary, original issue text, and comments. Press `Tab` to switch panes. Press `w` to generate or update the Contribution Packet, mark it Continue, and open the Start Work panel. Press `Space` to choose Defer or Discard; osmind writes the decision to the packet frontmatter, appends it to the Decision Log, records the current resource profile, and updates the local index. Deferred and discarded issues leave the Active queue until GitHub updates the issue or your `resources` config changes. Press `o` to open an existing packet for the selected issue.
 
 ### Packs
 
-Lists generated Contribution Packets from the local SQLite cache. You can inspect their status, decision, and confidence, mark Continue/Defer/Discard decisions, and regenerate material when the source item changes. Issue packets include the same `Recommendation Snapshot` table that Discover shows, so the Markdown file keeps the action, resource fit, configured resources, and evidence that led to the decision. Press `Enter` to read a packet inside the TUI with a section list and rendered Markdown, `o` to open the Markdown file externally, or `w` to open Start Work, which extracts the first 10 minutes, files/symbols, validation path, continue/stop criteria, and agent prompt into one execution-focused view.
+Lists generated Contribution Packets from the local SQLite cache. You can inspect their status, decision, and confidence, then use the same decision model as Discover: `w` marks Continue and opens Start Work; `Space` opens a small Defer/Discard menu. Issue packets include the same `Recommendation Snapshot` table that Discover shows, so the Markdown file keeps the action, resource fit, configured resources, and evidence that led to the decision. Press `Enter` to read a packet inside the TUI with a section list and rendered Markdown, or `o` to open the Markdown file externally.
 
 ### Review
 
@@ -154,24 +154,18 @@ For the ranking and Socratic use case, a 7B–27B local model is sufficient.
 | `p` | Packs tab |
 | `r` | Review tab |
 | `t` | Settings tab |
-| `f` | Open the current opportunity queue, fetching only if nothing is loaded yet (Discover) |
-| `u` | Update from GitHub and rank again (Discover) |
-| `s` | Re-rank with the current profile without calling GitHub (Discover) |
+| `u` | Load cached opportunities or fetch from GitHub and rank again (Discover) |
 | `a` | Cycle the Discover action filter |
+| `Enter` | Inspect selected issue in Discover, or read selected packet in Packs |
 | `Tab` | Switch between Analysis and Source panes in issue detail (Discover) |
-| `g` | Generate Contribution Packet for selected issue (Discover) |
-| `Enter` | Read the selected Contribution Packet in the TUI (Packs) |
-| `w` | Open Start Work for the selected issue or packet |
+| `Esc` / `q` | Return from detail, packet reader, or Start Work views |
+| `Space` | Decide Defer or Discard for selected issue or packet |
+| `w` | Start Work; generates or updates the packet and marks Continue |
 | `o` | Open Contribution Packet for selected issue or selected packet |
-| `y` | Mark selected issue or packet as Continue |
-| `l` | Mark selected issue or packet as Defer |
-| `n` | Mark selected issue or packet as Discard |
 | `v` | Focus saved Review answers for the selected packet (Review) |
 | `e` | Rewrite the selected saved Review answer (Review) |
 | `Delete` | Remove the selected saved Review answer, or the latest answer when no answer row is selected (Review) |
-| `c` | Launch Claude Code on selected issue |
-| `x` | Launch Codex on selected issue |
-| `q` | Quit |
+| `Ctrl+Q` | Quit |
 
 ## Tech stack
 

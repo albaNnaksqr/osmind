@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from osmind.decision import format_decision_markdown
+from osmind.engine.issue_brief import IssueBrief, render_issue_brief_markdown
 from osmind.github.models import GHIssue, GHPR, PRFile
 from osmind.packs.models import LearningPack, PackSection, SourceRef
 
@@ -56,7 +57,7 @@ class PackGenerator:
         )
 
     @staticmethod
-    def from_issue(issue: GHIssue, resources: dict | None = None) -> LearningPack:
+    def from_issue(issue: GHIssue, resources: dict | None = None, brief: IssueBrief | None = None) -> LearningPack:
         source = SourceRef(
             source_type="issue",
             repo=issue.repo,
@@ -81,6 +82,8 @@ class PackGenerator:
             PackSection("Decision Log", _decision_log()),
             PackSection("Notes", ""),
         ]
+        if brief is not None:
+            sections.insert(2, PackSection("Issue Brief", _issue_brief_body(brief)))
         return LearningPack(source=source, modules=[], sections=sections)
 
 
@@ -93,6 +96,16 @@ def _modules_from_files(files: list[PRFile]) -> list[str]:
             seen.add(module)
             modules.append(module)
     return modules
+
+
+def _issue_brief_body(brief: IssueBrief) -> str:
+    markdown = render_issue_brief_markdown(brief).strip()
+    lines = markdown.splitlines()
+    if lines and lines[0].strip() == "## Issue Brief":
+        lines = lines[1:]
+        if lines and not lines[0].strip():
+            lines = lines[1:]
+    return "\n".join(lines)
 
 
 def _file_summary(file: PRFile) -> str:

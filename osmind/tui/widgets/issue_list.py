@@ -6,6 +6,10 @@ from osmind.tui.recommendation import action_from_score, action_why, recommended
 
 
 class IssueTable(DataTable):
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("cursor_type", "row")
+        super().__init__(*args, **kwargs)
+
     def populate(self, issues: list[GHIssue]) -> None:
         self.clear(columns=True)
         self.add_columns("Action", "Why", "#", "Title", "Labels")

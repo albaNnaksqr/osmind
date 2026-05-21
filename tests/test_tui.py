@@ -6,6 +6,24 @@ from osmind.tui.app import OsmindApp
 from pathlib import Path
 
 
+def _issue_brief_payload(**overrides):
+    payload = {
+        "one_liner": "Tokenizer cache grows without bounds.",
+        "plain_explanation": "The tokenizer cache keeps growing after repeated requests.",
+        "why_it_fits": "The cached recommendation says this is actionable for Python work.",
+        "project_context": ["Tokenizer code owns request text normalization."],
+        "likely_files": ["python/sglang/tokenizer.py"],
+        "difficulty": "medium",
+        "readiness": "ready",
+        "background_to_learn": ["Read the tokenizer cache implementation."],
+        "next_steps": ["Add a regression test for repeated tokenization."],
+        "agent_questions": ["Which cache key is expected to be bounded?"],
+        "risks": ["The cache may be intentionally process-wide."],
+    }
+    payload.update(overrides)
+    return payload
+
+
 @pytest.fixture
 def mock_config():
     return Config(
@@ -174,10 +192,19 @@ def test_packs_reader_reuses_enter_without_extra_view_keys():
     from osmind.tui.screens.packs import PacksScreen
 
     keys_by_action = {binding[1]: binding[0] for binding in PacksScreen.BINDINGS}
+    bound_keys = {binding[0] for binding in PacksScreen.BINDINGS}
 
     assert keys_by_action["view_pack"] == "enter"
+    assert keys_by_action["decide"] == "space"
     assert "v" not in {binding[0] for binding in PacksScreen.BINDINGS}
     assert "m" not in {binding[0] for binding in PacksScreen.BINDINGS}
+    assert {"y", "l", "n", "u"}.isdisjoint(bound_keys)
+
+
+def test_plain_q_is_not_global_quit_shortcut():
+    from osmind.tui.app import OsmindApp
+
+    assert ("q", "quit", "Quit") not in OsmindApp.BINDINGS
 
 
 @pytest.mark.asyncio
@@ -282,6 +309,80 @@ async def test_discover_fetch_uses_cached_issues_without_github_or_rescoring(tem
         assert table.row_count == 1
         assert discover._issues_by_number["42"].score == 0.8
         assert discover._issues_by_number["42"].reason == "cached reason"
+
+
+@pytest.mark.asyncio
+async def test_discover_loads_existing_cached_queue_on_mount_without_github(temp_config, monkeypatch):
+    from osmind.cache.store import CacheStore
+    from osmind.github.models import GHIssue
+    from osmind.tui.widgets.issue_list import IssueTable
+    import osmind.github.client
+
+    issue = GHIssue(
+        42,
+        "Cached issue",
+        "Body",
+        [],
+        "https://github.com/sgl-project/sglang/issues/42",
+        "sgl-project/sglang",
+        "open",
+        score=0.8,
+        reason="cached reason",
+        updated_at="u42",
+    )
+    cache = CacheStore(temp_config.notes_vault / "osmind" / ".cache" / "osmind.db")
+    cache.upsert_issue(issue)
+    cache.update_issue_score(issue.repo, "issue", issue.number, issue.score, issue.reason)
+
+    class FailingGitHubClient:
+        def __init__(self, token=""):
+            pass
+
+        def get_issues(self, repo, limit=30, include_comments=False):
+            raise AssertionError("Mount should only read existing cache")
+
+    monkeypatch.setattr(osmind.github.client, "GitHubClient", FailingGitHubClient)
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        table = app.query_one(IssueTable)
+        assert table.row_count == 1
+        assert table.get_row_at(0)[2] == "42"
+
+
+@pytest.mark.asyncio
+async def test_discover_cached_mount_load_does_not_steal_focus_after_switching_tabs(temp_config):
+    from osmind.cache.store import CacheStore
+    from osmind.github.models import GHIssue
+    from textual.widgets import DataTable, TabbedContent
+
+    issue = GHIssue(
+        42,
+        "Cached issue",
+        "Body",
+        [],
+        "https://github.com/sgl-project/sglang/issues/42",
+        "sgl-project/sglang",
+        "open",
+        score=0.8,
+        reason="cached reason",
+        updated_at="u42",
+    )
+    cache = CacheStore(temp_config.notes_vault / "osmind" / ".cache" / "osmind.db")
+    cache.upsert_issue(issue)
+    cache.update_issue_score(issue.repo, "issue", issue.number, issue.score, issue.reason)
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        app.action_switch_tab("packs")
+        await pilot.pause()
+
+        app.query_one("DiscoverScreen")._load_cached_queue_if_available()
+        packs_table = app.query_one("#packs-table", DataTable)
+        assert app.query_one(TabbedContent).active == "packs"
+        assert app.focused is packs_table
 
 
 @pytest.mark.asyncio
@@ -634,7 +735,8 @@ async def test_discover_view_issue_separates_analysis_from_source(temp_config, m
     from osmind.tui.screens.discover import DiscoverScreen
     from osmind.tui.widgets.issue_list import IssueTable
     from textual.widgets import Static
-    import osmind.engine.issue_explainer
+    from osmind.engine.issue_brief import IssueBrief
+    import osmind.engine.issue_brief
     import osmind.engine.llm
 
     long_tail = "FULL_TEXT_SENTINEL_" + ("x" * 1900)
@@ -655,15 +757,20 @@ async def test_discover_view_issue_separates_analysis_from_source(temp_config, m
         def __init__(self, cfg):
             pass
 
-    class DummyIssueExplainer:
+    class DummyIssueBriefGenerator:
         def __init__(self, llm):
             pass
 
-        def summarize(self, issue):
-            return "这是 tokenizer cache 泄漏问题，适合先补复现测试。"
+        def generate(self, issue, reason=""):
+            return IssueBrief(
+                **_issue_brief_payload(
+                    one_liner="这是 tokenizer cache 泄漏问题，适合先补复现测试。",
+                    next_steps=["先补复现测试。"],
+                )
+            )
 
     monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
-    monkeypatch.setattr(osmind.engine.issue_explainer, "IssueExplainer", DummyIssueExplainer)
+    monkeypatch.setattr(osmind.engine.issue_brief, "IssueBriefGenerator", DummyIssueBriefGenerator)
 
     app = OsmindApp(temp_config)
     async with app.run_test() as pilot:
@@ -686,7 +793,10 @@ async def test_discover_view_issue_separates_analysis_from_source(temp_config, m
     assert "Stop" in str(analysis)
     assert long_tail not in str(analysis)
     assert "Issue #42: Tokenizer leak" in str(source)
-    assert "Summary" in str(source)
+    assert "Issue Brief" in str(source)
+    assert str(source).count("Issue Brief") == 1
+    assert "One-Liner" in str(source)
+    assert "Next Steps" in str(source)
     assert "这是 tokenizer cache 泄漏问题" in str(source)
     assert "Original Issue" in str(source)
     assert "The tokenizer cache keeps growing." in str(source)
@@ -696,12 +806,203 @@ async def test_discover_view_issue_separates_analysis_from_source(temp_config, m
 
 
 @pytest.mark.asyncio
+async def test_discover_view_issue_uses_cached_issue_brief_without_llm(temp_config, monkeypatch):
+    from osmind.cache.store import CacheStore
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    from osmind.tui.widgets.issue_list import IssueTable
+    from textual.widgets import Static
+    from osmind.engine.issue_brief import IssueBrief
+    import osmind.engine.issue_brief
+    import osmind.engine.llm
+
+    issue = GHIssue(
+        42,
+        "Tokenizer leak",
+        "Original body stays visible.",
+        ["bug"],
+        "https://github.com/o/r/issues/42",
+        "o/r",
+        "open",
+        reason="cached issue reason",
+    )
+    cached_brief = IssueBrief(
+        **_issue_brief_payload(
+            one_liner="Cached tokenizer brief.",
+            why_it_fits="cached issue reason",
+            next_steps=["Use cached next step."],
+        )
+    )
+    cache = CacheStore(temp_config.notes_vault / "osmind" / ".cache" / "osmind.db")
+    cache.upsert_issue(issue)
+    cache.update_issue_brief(issue.repo, issue.number, cached_brief.to_json())
+
+    class FailingLLMClient:
+        def __init__(self, cfg):
+            raise AssertionError("LLMClient should not be created when a cached brief exists")
+
+    class FailingIssueBriefGenerator:
+        def __init__(self, llm):
+            raise AssertionError("IssueBriefGenerator should not be created when a cached brief exists")
+
+    monkeypatch.setattr(osmind.engine.llm, "LLMClient", FailingLLMClient)
+    monkeypatch.setattr(osmind.engine.issue_brief, "IssueBriefGenerator", FailingIssueBriefGenerator)
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        table = app.query_one(IssueTable)
+        table.populate([issue])
+        table.cursor_coordinate = (0, 0)
+        discover._issues_by_number = {str(issue.number): issue}
+
+        await discover.action_view_issue()
+
+        source = app.query_one("#issue-source-panel", Static).content
+
+    assert "Cached tokenizer brief." in str(source)
+    assert "Use cached next step." in str(source)
+    assert "Original body stays visible." in str(source)
+
+
+@pytest.mark.asyncio
+async def test_discover_view_issue_regenerates_cached_brief_when_reason_changes(temp_config, monkeypatch):
+    from osmind.cache.store import CacheStore
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    from osmind.tui.widgets.issue_list import IssueTable
+    from textual.widgets import Static
+    from osmind.engine.issue_brief import IssueBrief
+    import osmind.engine.issue_brief
+    import osmind.engine.llm
+
+    issue = GHIssue(
+        42,
+        "Tokenizer leak",
+        "Original body stays visible.",
+        ["bug"],
+        "https://github.com/o/r/issues/42",
+        "o/r",
+        "open",
+        reason="new recommendation reason",
+    )
+    stale_brief = IssueBrief(
+        **_issue_brief_payload(
+            one_liner="Old cached tokenizer brief.",
+            why_it_fits="old recommendation reason",
+        )
+    )
+    cache = CacheStore(temp_config.notes_vault / "osmind" / ".cache" / "osmind.db")
+    cache.upsert_issue(issue)
+    cache.update_issue_brief(issue.repo, issue.number, stale_brief.to_json())
+    calls = []
+
+    class DummyLLMClient:
+        def __init__(self, cfg):
+            pass
+
+    class RecordingIssueBriefGenerator:
+        def __init__(self, llm):
+            pass
+
+        def generate(self, issue, reason=""):
+            calls.append((issue.number, reason))
+            return IssueBrief(
+                **_issue_brief_payload(
+                    one_liner="Fresh tokenizer brief.",
+                    why_it_fits=reason,
+                )
+            )
+
+    monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
+    monkeypatch.setattr(osmind.engine.issue_brief, "IssueBriefGenerator", RecordingIssueBriefGenerator)
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        table = app.query_one(IssueTable)
+        table.populate([issue])
+        table.cursor_coordinate = (0, 0)
+        discover._issues_by_number = {str(issue.number): issue}
+
+        await discover.action_view_issue()
+
+        source = app.query_one("#issue-source-panel", Static).content
+
+    assert calls == [(42, "new recommendation reason")]
+    assert "Fresh tokenizer brief." in str(source)
+    assert "new recommendation reason" in str(source)
+    assert "old recommendation reason" not in str(source)
+    assert "new recommendation reason" in cache.get_issue_brief(issue.repo, issue.number)
+
+
+@pytest.mark.asyncio
+async def test_discover_view_issue_ignores_stale_slow_generation_result(temp_config, monkeypatch):
+    import asyncio
+    import threading
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    from osmind.tui.widgets.issue_list import IssueTable
+    from textual.widgets import Static
+    from osmind.engine.issue_brief import IssueBrief
+    import osmind.engine.issue_brief
+    import osmind.engine.llm
+
+    first = GHIssue(1, "First issue", "First body.", [], "u1", "o/r", "open", reason="first reason")
+    second = GHIssue(2, "Second issue", "Second body.", [], "u2", "o/r", "open", reason="second reason")
+    slow_started = threading.Event()
+    release_slow = threading.Event()
+
+    class DummyLLMClient:
+        def __init__(self, cfg):
+            pass
+
+    class OrderedIssueBriefGenerator:
+        def __init__(self, llm):
+            pass
+
+        def generate(self, issue, reason=""):
+            if issue.number == 1:
+                slow_started.set()
+                release_slow.wait(timeout=2)
+                return IssueBrief(**_issue_brief_payload(one_liner="Slow first brief.", why_it_fits=reason))
+            return IssueBrief(**_issue_brief_payload(one_liner="Fast second brief.", why_it_fits=reason))
+
+    monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
+    monkeypatch.setattr(osmind.engine.issue_brief, "IssueBriefGenerator", OrderedIssueBriefGenerator)
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        table = app.query_one(IssueTable)
+        table.populate([first, second])
+        discover._issues_by_number = {str(first.number): first, str(second.number): second}
+
+        table.cursor_coordinate = (0, 0)
+        first_task = asyncio.create_task(discover.action_view_issue())
+        while not slow_started.is_set():
+            await asyncio.sleep(0.01)
+
+        table.cursor_coordinate = (1, 0)
+        await discover.action_view_issue()
+        release_slow.set()
+        await first_task
+
+        source = app.query_one("#issue-source-panel", Static).content
+
+    assert "Issue #2: Second issue" in str(source)
+    assert "Fast second brief." in str(source)
+    assert "Slow first brief." not in str(source)
+
+
+@pytest.mark.asyncio
 async def test_discover_detail_tab_toggles_analysis_and_source_focus(temp_config, monkeypatch):
     from osmind.github.models import GHIssue
     from osmind.tui.screens.discover import DiscoverScreen
     from osmind.tui.widgets.issue_list import IssueTable
     from textual.widgets import Static
-    import osmind.engine.issue_explainer
+    from osmind.engine.issue_brief import IssueBrief
+    import osmind.engine.issue_brief
     import osmind.engine.llm
 
     issue = GHIssue(42, "Tokenizer leak", "Body", [], "u", "o/r", "open")
@@ -710,15 +1011,15 @@ async def test_discover_detail_tab_toggles_analysis_and_source_focus(temp_config
         def __init__(self, cfg):
             pass
 
-    class DummyIssueExplainer:
+    class DummyIssueBriefGenerator:
         def __init__(self, llm):
             pass
 
-        def summarize(self, issue):
-            return "摘要"
+        def generate(self, issue, reason=""):
+            return IssueBrief(**_issue_brief_payload(one_liner="摘要"))
 
     monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
-    monkeypatch.setattr(osmind.engine.issue_explainer, "IssueExplainer", DummyIssueExplainer)
+    monkeypatch.setattr(osmind.engine.issue_brief, "IssueBriefGenerator", DummyIssueBriefGenerator)
 
     app = OsmindApp(temp_config)
     async with app.run_test() as pilot:
@@ -742,11 +1043,13 @@ async def test_discover_detail_tab_toggles_analysis_and_source_focus(temp_config
 
 
 @pytest.mark.asyncio
-async def test_discover_issue_detail_is_a_separate_view_and_escape_returns_to_list(temp_config, monkeypatch):
+async def test_discover_enter_key_opens_issue_detail_from_focused_table(temp_config, monkeypatch):
     from osmind.github.models import GHIssue
     from osmind.tui.screens.discover import DiscoverScreen
     from osmind.tui.widgets.issue_list import IssueTable
-    import osmind.engine.issue_explainer
+    from textual.widgets import Static
+    from osmind.engine.issue_brief import IssueBrief
+    import osmind.engine.issue_brief
     import osmind.engine.llm
 
     issue = GHIssue(42, "Tokenizer leak", "Body", [], "u", "o/r", "open")
@@ -755,15 +1058,61 @@ async def test_discover_issue_detail_is_a_separate_view_and_escape_returns_to_li
         def __init__(self, cfg):
             pass
 
-    class DummyIssueExplainer:
+    class DummyIssueBriefGenerator:
         def __init__(self, llm):
             pass
 
-        def summarize(self, issue):
-            return "摘要"
+        def generate(self, issue, reason=""):
+            return IssueBrief(**_issue_brief_payload(one_liner="摘要"))
 
     monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
-    monkeypatch.setattr(osmind.engine.issue_explainer, "IssueExplainer", DummyIssueExplainer)
+    monkeypatch.setattr(osmind.engine.issue_brief, "IssueBriefGenerator", DummyIssueBriefGenerator)
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        table = app.query_one(IssueTable)
+        table.populate([issue])
+        table.cursor_coordinate = (0, 0)
+        table.focus()
+        discover._issues_by_number = {str(issue.number): issue}
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert app.query_one("#issue-list-view").display is False
+        assert app.query_one("#issue-detail-view").display is True
+        assert app.focused is app.query_one("#issue-source-panel", Static)
+
+        await pilot.press("tab")
+
+        assert app.focused is app.query_one("#issue-analysis-panel", Static)
+
+
+@pytest.mark.asyncio
+async def test_discover_issue_detail_is_a_separate_view_and_escape_returns_to_list(temp_config, monkeypatch):
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    from osmind.tui.widgets.issue_list import IssueTable
+    from osmind.engine.issue_brief import IssueBrief
+    import osmind.engine.issue_brief
+    import osmind.engine.llm
+
+    issue = GHIssue(42, "Tokenizer leak", "Body", [], "u", "o/r", "open")
+
+    class DummyLLMClient:
+        def __init__(self, cfg):
+            pass
+
+    class DummyIssueBriefGenerator:
+        def __init__(self, llm):
+            pass
+
+        def generate(self, issue, reason=""):
+            return IssueBrief(**_issue_brief_payload(one_liner="摘要"))
+
+    monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
+    monkeypatch.setattr(osmind.engine.issue_brief, "IssueBriefGenerator", DummyIssueBriefGenerator)
 
     app = OsmindApp(temp_config)
     async with app.run_test() as pilot:
@@ -779,6 +1128,47 @@ async def test_discover_issue_detail_is_a_separate_view_and_escape_returns_to_li
         assert app.query_one("#issue-detail-view").display is True
 
         await pilot.press("escape")
+
+        assert app.query_one("#issue-list-view").display is True
+        assert app.query_one("#issue-detail-view").display is False
+        assert app.focused is table
+
+
+@pytest.mark.asyncio
+async def test_discover_q_returns_from_issue_detail_without_quitting(temp_config, monkeypatch):
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    from osmind.tui.widgets.issue_list import IssueTable
+    from osmind.engine.issue_brief import IssueBrief
+    import osmind.engine.issue_brief
+    import osmind.engine.llm
+
+    issue = GHIssue(42, "Tokenizer leak", "Body", [], "u", "o/r", "open")
+
+    class DummyLLMClient:
+        def __init__(self, cfg):
+            pass
+
+    class DummyIssueBriefGenerator:
+        def __init__(self, llm):
+            pass
+
+        def generate(self, issue, reason=""):
+            return IssueBrief(**_issue_brief_payload(one_liner="摘要"))
+
+    monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
+    monkeypatch.setattr(osmind.engine.issue_brief, "IssueBriefGenerator", DummyIssueBriefGenerator)
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        table = app.query_one(IssueTable)
+        table.populate([issue])
+        table.cursor_coordinate = (0, 0)
+        discover._issues_by_number = {str(issue.number): issue}
+
+        await discover.action_view_issue()
+        await pilot.press("q")
 
         assert app.query_one("#issue-list-view").display is True
         assert app.query_one("#issue-detail-view").display is False
@@ -907,7 +1297,9 @@ async def test_packs_enter_opens_packet_reader_without_new_shortcut_sprawl(temp_
         packs_table = app.query_one("#packs-table", DataTable)
         packs_table.cursor_coordinate = (0, 0)
 
-        app.query_one("PacksScreen").action_view_pack()
+        packs_table.focus()
+        await pilot.press("enter")
+        await pilot.pause()
 
         section_table = app.query_one("#packet-section-table", DataTable)
         markdown = app.query_one("#packet-markdown", Markdown)
@@ -929,6 +1321,49 @@ async def test_packs_enter_opens_packet_reader_without_new_shortcut_sprawl(temp_
         await pilot.pause()
 
         assert markdown.source.startswith("## First 10 Minutes")
+
+
+@pytest.mark.asyncio
+async def test_packs_q_returns_from_packet_reader_without_quitting(temp_config):
+    from osmind.github.models import GHPR
+    from osmind.services.library import PackLibrary
+    from textual.widgets import DataTable
+
+    library = PackLibrary(
+        temp_config.notes_vault,
+        temp_config.notes_vault / "osmind" / ".cache" / "osmind.db",
+    )
+    library.write_pr_pack(
+        GHPR(
+            number=4,
+            title="Readable Pack",
+            body="Packet body.",
+            url="https://github.com/o/r/pull/4",
+            repo="o/r",
+            updated_at="u4",
+        )
+    )
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        app.action_switch_tab("packs")
+        await pilot.pause()
+        table = app.query_one("#packs-table", DataTable)
+        table.cursor_coordinate = (0, 0)
+
+        table.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert app.query_one("#packet-reader-view").display is True
+
+        await pilot.press("q")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.query_one("#packs-list-view").display is True
+        assert app.query_one("#packet-reader-view").display is False
+        assert app.focused is table
 
 
 @pytest.mark.asyncio
@@ -966,7 +1401,10 @@ async def test_packs_start_work_shows_selected_packet_plan(temp_config):
         assert app.query_one("#pack-start-work-view").display is True
 
     content = str(panel.content)
+    markdown = (temp_config.notes_vault / "osmind" / "o_r" / "pr-3-workable-pack.md").read_text(encoding="utf-8")
     assert "Start Work" in content
+    assert "Decision: continue" in content
+    assert "decision: continue" in markdown
     assert "PR #3: Workable Pack" in content
     assert "First 10 Minutes" in content
     assert "Validation Path" in content
@@ -1494,6 +1932,48 @@ async def test_discover_generate_pack_writes_selected_issue(temp_config, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_discover_generate_pack_includes_cached_issue_brief(temp_config, monkeypatch):
+    from osmind.cache.store import CacheStore
+    from osmind.engine.issue_brief import IssueBrief
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+
+    issue = GHIssue(
+        number=42,
+        title="Tokenizer leak",
+        body="Body",
+        labels=["bug"],
+        url="https://github.com/o/r/issues/42",
+        repo="o/r",
+        state="open",
+        updated_at="u42",
+        reason="cached fit reason",
+    )
+    brief = IssueBrief(
+        **_issue_brief_payload(
+            one_liner="Cached packet brief.",
+            why_it_fits="cached fit reason",
+            next_steps=["Carry this brief into the packet."],
+        )
+    )
+    cache = CacheStore(temp_config.notes_vault / "osmind" / ".cache" / "osmind.db")
+    cache.upsert_issue(issue)
+    cache.update_issue_brief(issue.repo, issue.number, brief.to_json())
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        monkeypatch.setattr(discover, "_get_selected_issue", lambda: issue)
+        await discover.action_generate_pack()
+
+    path = temp_config.notes_vault / "osmind" / "o_r" / "issue-42-tokenizer-leak.md"
+    markdown = path.read_text(encoding="utf-8")
+    assert "## Issue Brief" in markdown
+    assert "Cached packet brief." in markdown
+    assert "Carry this brief into the packet." in markdown
+
+
+@pytest.mark.asyncio
 async def test_discover_start_work_generates_packet_and_shows_plan(temp_config, monkeypatch):
     from osmind.github.models import GHIssue
     from osmind.tui.screens.discover import DiscoverScreen
@@ -1527,38 +2007,88 @@ async def test_discover_start_work_generates_packet_and_shows_plan(temp_config, 
         assert app.query_one("#start-work-view").display is True
 
     content = str(panel.content)
+    markdown = (temp_config.notes_vault / "osmind" / "o_r" / "issue-43-tokenizer-leak.md").read_text(encoding="utf-8")
     assert "Start Work" in content
+    assert "Decision: continue" in content
+    assert "decision: continue" in markdown
     assert "Issue #43: Tokenizer leak" in content
     assert "First 10 Minutes" in content
     assert "Validation Path" in content
     assert "Agent Exploration Prompt" in content
 
 
-def test_discover_bindings_include_generate_and_open_pack():
+def test_discover_bindings_keep_only_core_opportunity_actions():
     from osmind.tui.screens.discover import DiscoverScreen
 
     bindings_by_action = {b[1]: b[2] for b in DiscoverScreen.BINDINGS}
     keys_by_action = {b[1]: b[0] for b in DiscoverScreen.BINDINGS}
+    bound_keys = {b[0] for b in DiscoverScreen.BINDINGS}
 
-    assert bindings_by_action["generate_pack"] == "Generate Packet"
     assert bindings_by_action["open_pack"] == "Open Packet"
-    assert bindings_by_action["mark_continue"] == "Continue"
-    assert bindings_by_action["mark_defer"] == "Defer"
-    assert bindings_by_action["mark_discard"] == "Discard"
-    assert bindings_by_action["update"] == "Update from GitHub"
-    assert bindings_by_action["rescore"] == "Re-rank"
+    assert bindings_by_action["decide"] == "Decide"
+    assert bindings_by_action["update"] == "Load/Update"
     assert bindings_by_action["start_work"] == "Start Work"
     assert keys_by_action["update"] == "u"
-    assert keys_by_action["rescore"] == "s"
     assert keys_by_action["start_work"] == "w"
+    assert keys_by_action["decide"] == "space"
+    assert keys_by_action["view_issue"] == "enter"
+    assert ("v", "view_issue", "View Issue") in DiscoverScreen.BINDINGS
+    assert {"f", "s", "g", "y", "l", "n"}.isdisjoint(bound_keys)
     assert "r" not in {binding[0] for binding in DiscoverScreen.BINDINGS}
 
 
 @pytest.mark.asyncio
-async def test_discover_update_ignores_cached_issues_and_rescores(temp_config, monkeypatch):
+async def test_discover_update_menu_can_read_cache_without_github(temp_config, monkeypatch):
     from osmind.cache.store import CacheStore
     from osmind.github.models import GHIssue
     from osmind.tui.screens.discover import DiscoverScreen
+    from osmind.tui.update_dialog import QueueUpdateDialog
+    from osmind.tui.widgets.issue_list import IssueTable
+    import osmind.github.client
+
+    cache = CacheStore(temp_config.notes_vault / "osmind" / ".cache" / "osmind.db")
+    cached = GHIssue(1, "Cached issue", "Old body", [], "old", "sgl-project/sglang", "open")
+    cache.upsert_issue(cached)
+    cache.update_issue_score(cached.repo, "issue", cached.number, 0.1, "old cached reason")
+
+    class FailingGitHubClient:
+        def __init__(self, token=""):
+            pass
+
+        def get_issues(self, repo, limit=30, include_comments=False):
+            raise AssertionError("Reading cache should not fetch from GitHub")
+
+    monkeypatch.setattr(osmind.github.client, "GitHubClient", FailingGitHubClient)
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.query_one(DiscoverScreen).action_update()
+        await pilot.pause()
+
+        assert isinstance(app.screen, QueueUpdateDialog)
+
+        await pilot.press("enter")
+        await pilot.pause()
+        table = app.query_one(IssueTable)
+        row = table.get_row_at(0)
+
+    assert row[0] == "Skip"
+    assert "old cached reason" in row[1]
+    assert row[2] == "1"
+    log_path = temp_config.notes_vault / "osmind" / ".cache" / "osmind.log"
+    if log_path.exists():
+        log_text = log_path.read_text(encoding="utf-8")
+        assert "NoActiveWorker" not in log_text
+        assert "Failed to update issues" not in log_text
+
+
+@pytest.mark.asyncio
+async def test_discover_update_menu_can_fetch_and_rescore(temp_config, monkeypatch):
+    from osmind.cache.store import CacheStore
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    from osmind.tui.update_dialog import QueueUpdateDialog
     from osmind.tui.widgets.issue_list import IssueTable
     import osmind.engine.llm
     import osmind.engine.ranker
@@ -1602,6 +2132,72 @@ async def test_discover_update_ignores_cached_issues_and_rescores(temp_config, m
 
     app = OsmindApp(temp_config)
     async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.query_one(DiscoverScreen).action_update()
+        await pilot.pause()
+
+        assert isinstance(app.screen, QueueUpdateDialog)
+
+        await pilot.press("down")
+        await pilot.press("enter")
+        await pilot.pause()
+        table = app.query_one(IssueTable)
+        row = table.get_row_at(0)
+
+    fresh_cache = CacheStore(temp_config.notes_vault / "osmind" / ".cache" / "osmind.db")
+    cached_new_issue = {issue.number: issue for issue in fresh_cache.list_issues("sgl-project/sglang")}[2]
+    assert calls == [("sgl-project/sglang", 30, False)]
+    assert row[0] == "Do now"
+    assert "fresh score" in row[1]
+    assert row[2] == "2"
+    assert cached_new_issue.priority == "high"
+    assert cached_new_issue.reason == "fresh score"
+
+
+@pytest.mark.asyncio
+async def test_discover_update_fetches_directly_when_no_cache(temp_config, monkeypatch):
+    from osmind.cache.store import CacheStore
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    from osmind.tui.widgets.issue_list import IssueTable
+    import osmind.engine.llm
+    import osmind.engine.ranker
+    import osmind.github.client
+
+    fetched = GHIssue(2, "Fetched issue", "New body", [], "new", "sgl-project/sglang", "open")
+    calls = []
+
+    class RecordingGitHubClient:
+        def __init__(self, token=""):
+            pass
+
+        def get_issues(self, repo, limit=30, include_comments=False):
+            calls.append((repo, limit, include_comments))
+            return [fetched]
+
+    class DummyLLMClient:
+        def __init__(self, cfg):
+            pass
+
+    class RecordingRanker:
+        def __init__(self, llm, interests, skills, resources=None):
+            pass
+
+        def score_one(self, issue):
+            issue.score = 0.8
+            issue.priority = "high"
+            issue.fit = "high"
+            issue.resource_fit = "ok"
+            issue.actionability = "high"
+            issue.reason = "fresh score"
+            return issue
+
+    monkeypatch.setattr(osmind.github.client, "GitHubClient", RecordingGitHubClient)
+    monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
+    monkeypatch.setattr(osmind.engine.ranker, "Ranker", RecordingRanker)
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
         discover = app.query_one(DiscoverScreen)
         await discover.action_update()
 
@@ -1613,8 +2209,6 @@ async def test_discover_update_ignores_cached_issues_and_rescores(temp_config, m
     assert calls == [("sgl-project/sglang", 30, False)]
     assert row[0] == "Do now"
     assert "fresh score" in row[1]
-    assert row[2] == "2"
-    assert cached_new_issue.priority == "high"
     assert cached_new_issue.reason == "fresh score"
 
 
@@ -1676,10 +2270,12 @@ async def test_discover_rescore_uses_cached_issues_without_github(temp_config, m
 
 
 @pytest.mark.asyncio
-async def test_discover_decision_action_creates_packet_and_marks_decision(temp_config, monkeypatch):
+async def test_discover_space_decides_selected_choice(temp_config):
     from osmind.github.models import GHIssue
     from osmind.services.library import PackLibrary
+    from osmind.tui.decision_dialog import DecisionDialog
     from osmind.tui.screens.discover import DiscoverScreen
+    from osmind.tui.widgets.issue_list import IssueTable
 
     issue = GHIssue(
         number=42,
@@ -1694,9 +2290,19 @@ async def test_discover_decision_action_creates_packet_and_marks_decision(temp_c
     app = OsmindApp(temp_config)
     async with app.run_test() as pilot:
         discover = app.query_one(DiscoverScreen)
-        monkeypatch.setattr(discover, "_get_selected_issue", lambda: issue)
+        table = app.query_one(IssueTable)
+        table.populate([issue])
+        table.cursor_coordinate = (0, 0)
+        table.focus()
+        discover._issues_by_number = {str(issue.number): issue}
 
-        await discover.action_mark_continue()
+        await pilot.press("space")
+        await pilot.pause()
+
+        assert isinstance(app.screen, DecisionDialog)
+
+        await pilot.press("enter")
+        await pilot.pause()
 
     path = temp_config.notes_vault / "osmind" / "o_r" / "issue-42-tokenizer-leak.md"
     library = PackLibrary(
@@ -1704,8 +2310,8 @@ async def test_discover_decision_action_creates_packet_and_marks_decision(temp_c
         temp_config.notes_vault / "osmind" / ".cache" / "osmind.db",
     )
     markdown = path.read_text(encoding="utf-8")
-    assert "decision: continue" in markdown
-    assert library.list_packs()[0]["decision"] == "continue"
+    assert "decision: defer" in markdown
+    assert library.list_packs()[0]["decision"] == "defer"
     assert library.list_packs()[0]["decision_resource_hash"]
 
 
@@ -1724,9 +2330,10 @@ async def test_packs_screen_uses_contribution_packet_language(temp_config):
 
 
 @pytest.mark.asyncio
-async def test_packs_screen_decision_action_updates_packet_and_table(temp_config):
+async def test_packs_space_decides_selected_packet_from_menu_choice(temp_config):
     from osmind.github.models import GHIssue
     from osmind.services.library import PackLibrary
+    from osmind.tui.decision_dialog import DecisionDialog
     from textual.widgets import DataTable
 
     library = PackLibrary(
@@ -1752,14 +2359,20 @@ async def test_packs_screen_decision_action_updates_packet_and_table(temp_config
         await pilot.pause()
         table = app.query_one("#packs-table", DataTable)
         table.cursor_coordinate = (0, 0)
+        table.focus()
 
-        await app.query_one("PacksScreen").action_mark_discard()
+        await pilot.press("space")
+        await pilot.pause()
 
+        assert isinstance(app.screen, DecisionDialog)
+
+        await pilot.press("enter")
+        await pilot.pause()
         visible_row = table.get_row_at(0)
 
     markdown = path.read_text(encoding="utf-8")
-    assert "decision: discard" in markdown
-    assert "discard" in [str(cell) for cell in visible_row]
+    assert "decision: defer" in markdown
+    assert "defer" in [str(cell) for cell in visible_row]
 
 
 @pytest.mark.asyncio

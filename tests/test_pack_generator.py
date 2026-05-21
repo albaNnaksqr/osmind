@@ -1,4 +1,5 @@
 from osmind.github.models import GHComment, GHIssue, GHPR, PRFile
+from osmind.engine.issue_brief import IssueBrief
 from osmind.packs.generator import PackGenerator
 
 
@@ -211,6 +212,55 @@ def test_from_issue_includes_required_sections_and_issue_context():
     assert "o/r" in sections["Agent Exploration Prompt"]
     assert "Tokenizer leak" in sections["Agent Exploration Prompt"]
     assert "Do not implement" in sections["Agent Exploration Prompt"]
+
+
+def test_from_issue_includes_issue_brief_when_present():
+    issue = GHIssue(
+        number=42,
+        title="Tokenizer leak",
+        body="Long sequences leak memory.",
+        labels=["bug", "tokenizer"],
+        url="https://github.com/o/r/issues/42",
+        repo="o/r",
+        state="open",
+    )
+    brief = IssueBrief(
+        one_liner="Tokenizer cache grows without bound.",
+        plain_explanation="The tokenizer retains entries for long sequences.",
+        why_it_fits="It matches the current memory profiling focus.",
+        project_context=["Tokenizer cache owns sequence memoization."],
+        likely_files=["src/tokenizer/cache.py"],
+        difficulty="medium",
+        readiness="ready",
+        background_to_learn=["Read the tokenizer cache implementation."],
+        next_steps=["Add a failing memory regression test."],
+        agent_questions=["Which cache key keeps growing?"],
+        risks=["Memory behavior may depend on input shape."],
+    )
+
+    pack = PackGenerator().from_issue(issue, brief=brief)
+    sections = {section.title: section.body for section in pack.sections}
+
+    assert list(sections) == [
+        "What This Is",
+        "Recommendation Snapshot",
+        "Issue Brief",
+        "Why It May Fit You",
+        "Continue Or Stop Criteria",
+        "First 10 Minutes",
+        "Files And Symbols To Inspect",
+        "Validation Path",
+        "Known Facts",
+        "Missing Context",
+        "Reproduction Hypothesis",
+        "Maintainer Signals",
+        "Agent Exploration Prompt",
+        "Decision Log",
+        "Notes",
+    ]
+    assert sections["Issue Brief"].startswith("### One-Liner")
+    assert "Tokenizer cache grows without bound." in sections["Issue Brief"]
+    assert "## Issue Brief" not in sections["Issue Brief"]
 
 
 def test_from_issue_uses_discover_recommendation_reason_in_fit_section():

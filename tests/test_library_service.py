@@ -4,6 +4,7 @@ from datetime import date
 
 import pytest
 
+from osmind.engine.issue_brief import IssueBrief
 from osmind.github.models import GHIssue, GHPR, PRFile
 from osmind.packs.opener import open_path
 from osmind.services.library import PackLibrary
@@ -244,6 +245,36 @@ def test_write_issue_pack_includes_configured_resources_in_recommendation_snapsh
     assert "## Recommendation Snapshot" in markdown
     assert "| Resource Fit | Blocked |" in markdown
     assert "| Configured Resources | gpus: 4x RTX 4090 |" in markdown
+
+
+def test_write_issue_pack_can_include_issue_brief(tmp_path):
+    notes_vault = tmp_path / "notes"
+    cache_path = tmp_path / "cache" / "osmind.db"
+    brief = IssueBrief(
+        one_liner="Tokenizer cache grows without bound.",
+        plain_explanation="The tokenizer retains entries for long sequences.",
+        why_it_fits="It matches the current memory profiling focus.",
+        project_context=["Tokenizer cache owns sequence memoization."],
+        likely_files=["src/tokenizer/cache.py"],
+        difficulty="medium",
+        readiness="ready",
+        background_to_learn=["Read the tokenizer cache implementation."],
+        next_steps=["Add a failing memory regression test."],
+        agent_questions=["Which cache key keeps growing?"],
+        risks=["Memory behavior may depend on input shape."],
+    )
+    library = PackLibrary(notes_vault, cache_path)
+
+    path = library.write_issue_pack(_issue(), brief=brief)
+
+    markdown = path.read_text(encoding="utf-8")
+    assert "## Recommendation Snapshot" in markdown
+    assert "## Issue Brief" in markdown
+    assert "### One-Liner" in markdown
+    assert "Tokenizer cache grows without bound." in markdown
+    assert markdown.index("## Recommendation Snapshot") < markdown.index("## Issue Brief")
+    assert markdown.index("## Issue Brief") < markdown.index("## Why It May Fit You")
+    assert markdown.count("## Issue Brief") == 1
 
 
 def test_write_issue_pack_reuses_cached_path_and_preserves_user_content_on_retitle(tmp_path):

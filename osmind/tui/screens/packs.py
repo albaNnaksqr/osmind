@@ -10,6 +10,7 @@ from textual.widgets import DataTable, Label, Markdown, Static
 from osmind.logs import log_exception
 from osmind.packs.opener import open_path
 from osmind.services.library import PackLibrary
+from osmind.tui.decision_dialog import DecisionDialog
 from osmind.tui.packet_reader import packet_outline, packet_section_markdown
 from osmind.tui.lifecycle import resources_hash
 from osmind.tui.suspend import suspend_if_supported
@@ -30,25 +31,23 @@ class PacksScreen(Vertical):
         ("enter", "view_pack", "Read Packet"),
         ("o", "open_pack", "Open Packet"),
         ("w", "start_work", "Start Work"),
-        ("y", "mark_continue", "Continue"),
-        ("l", "mark_defer", "Defer"),
-        ("n", "mark_discard", "Discard"),
-        ("u", "reload", "Reload"),
+        ("space", "decide", "Decide"),
         ("escape", "back_to_list", "Back"),
+        ("q", "back_to_list", "Back"),
     ]
 
     def compose(self) -> ComposeResult:
         with Vertical(id="packs-list-view"):
             yield Label("[bold]Contribution Packets[/bold]", markup=True)
             yield DataTable(id="packs-table", cursor_type="row")
-            yield Label("[dim]Enter: read  o: open  w: start work  y/l/n: continue/defer/discard  u: reload  r: review[/dim]", markup=True)
+            yield Label("[dim]Enter: read  Space: decide  w: start work  o: open[/dim]", markup=True)
         with Vertical(id="packet-reader-view"):
-            yield Static("[dim]↑↓ 选择 section。Esc 返回列表。o 外部打开。w Start Work。[/dim]", id="packet-reader-hint")
+            yield Static("[dim]↑↓ 选择 section。Esc/q 返回列表。o 外部打开。w Start Work。[/dim]", id="packet-reader-hint")
             with Horizontal(id="packet-reader-body"):
                 yield DataTable(id="packet-section-table", cursor_type="row")
                 yield Markdown("", id="packet-markdown")
         with Vertical(id="pack-start-work-view"):
-            yield Static("[dim]Esc 返回列表。o 打开 Packet。[/dim]", id="pack-start-work-hint")
+            yield Static("[dim]Esc/q 返回列表。o 打开 Packet。[/dim]", id="pack-start-work-hint")
             yield Static("", id="pack-start-work-panel")
 
     def on_mount(self) -> None:
@@ -137,7 +136,9 @@ class PacksScreen(Vertical):
         if pack is None:
             return
         try:
-            markdown = Path(pack["path"]).read_text(encoding="utf-8")
+            path = self._write_pack_decision(pack, "continue")
+            self._load()
+            markdown = path.read_text(encoding="utf-8")
             panel = self.query_one("#pack-start-work-panel", Static)
             panel.update(format_start_work_from_packet(markdown, self.app.config.resources))
             self._show_start_work()
@@ -154,13 +155,22 @@ class PacksScreen(Vertical):
         self.query_one("#packs-list-view").display = True
         self.query_one("#packet-reader-view").display = False
         self.query_one("#pack-start-work-view").display = False
-        self.query_one("#packs-table", DataTable).focus()
+        self.call_after_refresh(lambda: self.query_one("#packs-table", DataTable).focus())
+
+    def on_key(self, event) -> None:
+        if event.key != "q":
+            return
+        if not self.query_one("#pack-start-work-view").display and not self.query_one("#packet-reader-view").display:
+            return
+        event.prevent_default()
+        event.stop()
+        self.action_back_to_list()
 
     def _show_packet_reader(self) -> None:
         self.query_one("#packs-list-view").display = False
         self.query_one("#packet-reader-view").display = True
         self.query_one("#pack-start-work-view").display = False
-        self.query_one("#packet-section-table", DataTable).focus()
+        self.call_after_refresh(lambda: self.query_one("#packet-section-table", DataTable).focus())
 
     def _show_start_work(self) -> None:
         self.query_one("#packs-list-view").display = False
@@ -168,7 +178,7 @@ class PacksScreen(Vertical):
         self.query_one("#pack-start-work-view").display = True
         panel = self.query_one("#pack-start-work-panel", Static)
         panel.can_focus = True
-        panel.focus()
+        self.call_after_refresh(panel.focus)
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if event.data_table.id != "packet-section-table":
@@ -178,23 +188,40 @@ class PacksScreen(Vertical):
         except (TypeError, ValueError):
             return
 
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        if event.data_table.id != "packs-table":
+            return
+        event.stop()
+        self.action_view_pack()
+
     def _show_packet_section(self, index: int) -> None:
         self.query_one("#packet-markdown", Markdown).update(packet_section_markdown(self._reader_markdown, index))
 
-    async def _mark_selected_pack_decision(self, decision: str) -> None:
+    def _write_pack_decision(self, pack: dict, decision: str) -> Path:
+        return self._library().set_pack_decision(
+            pack["repo"],
+            pack["source_type"],
+            int(pack["number"]),
+            decision,
+            decision_resource_hash=resources_hash(self.app.config.resources),
+        )
+
+    async def action_decide(self) -> None:
         pack = self._selected_pack()
         if pack is None:
             return
+        async def handle_decision(decision: str | None) -> None:
+            if decision not in {"defer", "discard"}:
+                return
+            await self._mark_pack_decision(pack, str(decision))
+
+        self.app.push_screen(DecisionDialog(), handle_decision)
+
+    async def _mark_pack_decision(self, pack: dict, decision: str) -> None:
+        if decision not in {"defer", "discard"}:
+            return
         try:
-            path = await asyncio.to_thread(
-                lambda: self._library().set_pack_decision(
-                    pack["repo"],
-                    pack["source_type"],
-                    int(pack["number"]),
-                    decision,
-                    decision_resource_hash=resources_hash(self.app.config.resources),
-                )
-            )
+            path = await asyncio.to_thread(lambda: self._write_pack_decision(pack, decision))
             self._load()
             self.notify(f"Marked {decision}: {path}", timeout=5)
         except Exception as e:
@@ -203,6 +230,12 @@ class PacksScreen(Vertical):
                 f"Failed to mark Contribution Packet decision for {pack['repo']}#{pack['number']}",
             )
             self.notify(f"{e} (log: {log_path})", severity="error")
+
+    async def _mark_selected_pack_decision(self, decision: str) -> None:
+        pack = self._selected_pack()
+        if pack is None:
+            return
+        await self._mark_pack_decision(pack, decision)
 
     async def action_mark_continue(self) -> None:
         await self._mark_selected_pack_decision("continue")
