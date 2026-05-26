@@ -76,6 +76,7 @@ class DiscoverScreen(Vertical):
         super().__init__()
         self._issues_by_number: dict[str, object] = {}
         self._pack_paths_by_key: dict[tuple[str, str, int], str] = {}
+        self._issue_brief_tasks: dict[tuple[str, str, int], asyncio.Task] = {}
         self._action_filter = "active"
         self._issue_detail_request_id = 0
 
@@ -612,6 +613,11 @@ class DiscoverScreen(Vertical):
         if cached is not None:
             return cached
 
+        pack_key = self._pack_key(issue)
+        existing_task = self._issue_brief_tasks.get(pack_key)
+        if existing_task is not None:
+            return await existing_task
+
         def _generate():
             from osmind.engine.issue_brief import IssueBriefGenerator
             from osmind.engine.llm import LLMClient
@@ -625,7 +631,12 @@ class DiscoverScreen(Vertical):
             self._cache().update_issue_brief(issue.repo, issue.number, brief.to_json())
             return brief
 
-        return await asyncio.to_thread(_generate)
+        task = asyncio.create_task(asyncio.to_thread(_generate))
+        self._issue_brief_tasks[pack_key] = task
+        try:
+            return await task
+        finally:
+            self._issue_brief_tasks.pop(pack_key, None)
 
     async def action_start_work(self) -> None:
         issue = self._get_selected_issue()

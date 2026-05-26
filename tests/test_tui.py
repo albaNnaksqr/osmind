@@ -2103,6 +2103,114 @@ async def test_discover_generate_pack_includes_cached_issue_brief(temp_config, m
 
 
 @pytest.mark.asyncio
+async def test_discover_load_or_generate_issue_brief_deduplicates_concurrent_calls(temp_config, monkeypatch):
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    from osmind.engine.issue_brief import IssueBrief
+    import asyncio
+    import osmind.engine.issue_brief
+    import osmind.engine.llm
+    import threading
+
+    issue = GHIssue(
+        number=44,
+        title="Tokenizer leak",
+        body="Body",
+        labels=["bug"],
+        url="https://github.com/o/r/issues/44",
+        repo="o/r",
+        state="open",
+        updated_at="u44",
+        reason="same reason",
+    )
+    calls = []
+    generation_started = threading.Event()
+    generation_continue = threading.Event()
+
+    class DummyLLMClient:
+        def __init__(self, cfg):
+            pass
+
+    class SlowIssueBriefGenerator:
+        def __init__(self, llm):
+            pass
+
+        def generate(self, issue, reason="", profile_context=None):
+            calls.append((issue.number, reason))
+            generation_started.set()
+            generation_continue.wait(1.0)
+            return IssueBrief(**_issue_brief_payload(one_liner="Shared brief."))
+
+    monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
+    monkeypatch.setattr(osmind.engine.issue_brief, "IssueBriefGenerator", SlowIssueBriefGenerator)
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+
+        first = asyncio.create_task(discover._load_or_generate_issue_brief(issue))
+        pack_key = discover._pack_key(issue)
+        while pack_key not in discover._issue_brief_tasks:
+            await asyncio.sleep(0.01)
+
+        second = asyncio.create_task(discover._load_or_generate_issue_brief(issue))
+        while not generation_started.is_set():
+            await asyncio.sleep(0.01)
+        generation_continue.set()
+
+        first_brief, second_brief = await asyncio.gather(first, second)
+
+    assert first_brief.one_liner == second_brief.one_liner == "Shared brief."
+    assert calls == [(44, "same reason")]
+
+
+@pytest.mark.parametrize("action_name", ["generate_pack", "start_work"])
+@pytest.mark.asyncio
+async def test_discover_pack_actions_fallback_without_issue_brief_on_generation_failure(temp_config, monkeypatch, action_name):
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    import osmind.engine.issue_brief
+    import osmind.engine.llm
+
+    number = 45 if action_name == "start_work" else 44
+    issue = GHIssue(
+        number=number,
+        title="Tokenizer leak",
+        body="Body",
+        labels=["bug"],
+        url=f"https://github.com/o/r/issues/{number}",
+        repo="o/r",
+        state="open",
+        updated_at="u44",
+    )
+
+    class DummyLLMClient:
+        def __init__(self, cfg):
+            pass
+
+    class FailingIssueBriefGenerator:
+        def __init__(self, llm):
+            pass
+
+        def generate(self, issue, reason="", profile_context=None):
+            raise RuntimeError("issue brief unavailable")
+
+    monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
+    monkeypatch.setattr(osmind.engine.issue_brief, "IssueBriefGenerator", FailingIssueBriefGenerator)
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        monkeypatch.setattr(discover, "_get_selected_issue", lambda: issue)
+        await getattr(discover, f"action_{action_name}")()
+
+    path = temp_config.notes_vault / "osmind" / "o_r" / f"issue-{number}-tokenizer-leak.md"
+    markdown = path.read_text(encoding="utf-8")
+    assert f"# Issue #{number}: Tokenizer leak" in markdown
+    assert "## Issue Brief" not in markdown
+
+
+@pytest.mark.asyncio
 async def test_discover_start_work_writes_pack_with_agent_prompt(temp_config, monkeypatch):
     from osmind.engine.issue_brief import IssueBrief
     from osmind.github.models import GHIssue
