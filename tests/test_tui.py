@@ -8,17 +8,17 @@ from pathlib import Path
 
 def _issue_brief_payload(**overrides):
     payload = {
-        "one_liner": "Tokenizer cache grows without bounds.",
-        "plain_explanation": "The tokenizer cache keeps growing after repeated requests.",
-        "why_it_fits": "The cached recommendation says this is actionable for Python work.",
-        "project_context": ["Tokenizer code owns request text normalization."],
-        "likely_files": ["python/sglang/tokenizer.py"],
-        "difficulty": "medium",
-        "readiness": "ready",
-        "background_to_learn": ["Read the tokenizer cache implementation."],
-        "next_steps": ["Add a regression test for repeated tokenization."],
-        "agent_questions": ["Which cache key is expected to be bounded?"],
-        "risks": ["The cache may be intentionally process-wide."],
+        "one_liner": "这是 tokenizer cache 泄漏问题，适合先补复现测试。",
+        "problem_summary": "Issue 描述 tokenizer cache 会持续增长，需要定位缓存释放或 key 策略。",
+        "background": ["Tokenizer cache 可能影响长序列请求的内存占用。"],
+        "matched_interests": ["SGLang"],
+        "matched_skills": ["Python"],
+        "resource_assessment": "可以先用小输入和单测验证，不需要大 GPU。",
+        "evidence": ["Label bug.", "Body mentions cache keeps growing."],
+        "risks": ["Issue 可能缺少完整复现脚本。"],
+        "first_steps": ["搜索 tokenizer cache。", "补一个最小内存增长复现。"],
+        "validation_path": ["复现测试先失败。", "修复后缓存数量不再随长序列无限增长。"],
+        "agent_prompt": "请在 o/r 中分析 tokenizer cache 泄漏 issue，先找缓存实现和最小复现测试。",
     }
     payload.update(overrides)
     return payload
@@ -735,7 +735,11 @@ async def test_discover_view_issue_separates_analysis_from_source(temp_config, m
     from osmind.tui.screens.discover import DiscoverScreen
     from osmind.tui.widgets.issue_list import IssueTable
     from textual.widgets import Static
-    from osmind.engine.issue_brief import IssueBrief
+    from osmind.engine.issue_brief import (
+        IssueBrief,
+        IssueBriefProfileContext,
+        issue_brief_metadata,
+    )
     import osmind.engine.issue_brief
     import osmind.engine.llm
 
@@ -761,11 +765,11 @@ async def test_discover_view_issue_separates_analysis_from_source(temp_config, m
         def __init__(self, llm):
             pass
 
-        def generate(self, issue, reason=""):
+        def generate(self, issue, reason="", profile_context=None):
             return IssueBrief(
                 **_issue_brief_payload(
                     one_liner="这是 tokenizer cache 泄漏问题，适合先补复现测试。",
-                    next_steps=["先补复现测试。"],
+                    first_steps=["先补复现测试。"],
                 )
             )
 
@@ -796,8 +800,14 @@ async def test_discover_view_issue_separates_analysis_from_source(temp_config, m
     assert "Issue Brief" in str(source)
     assert str(source).count("Issue Brief") == 1
     assert "One-Liner" in str(source)
+    assert "Problem Summary" in str(source)
+    assert "Why It May Fit You" in str(source)
+    assert "Risks And Missing Evidence" in str(source)
     assert "First 30 Minutes" in str(source)
+    assert "Validation Path" in str(source)
+    assert "Agent Prompt" in str(source)
     assert "这是 tokenizer cache 泄漏问题" in str(source)
+    assert "请在 o/r 中分析 tokenizer cache 泄漏 issue" in str(source)
     assert "Original Issue" in str(source)
     assert "The tokenizer cache keeps growing." in str(source)
     assert long_tail in str(source)
@@ -812,7 +822,11 @@ async def test_discover_view_issue_uses_cached_issue_brief_without_llm(temp_conf
     from osmind.tui.screens.discover import DiscoverScreen
     from osmind.tui.widgets.issue_list import IssueTable
     from textual.widgets import Static
-    from osmind.engine.issue_brief import IssueBrief
+    from osmind.engine.issue_brief import (
+        IssueBrief,
+        IssueBriefProfileContext,
+        issue_brief_metadata,
+    )
     import osmind.engine.issue_brief
     import osmind.engine.llm
 
@@ -829,9 +843,18 @@ async def test_discover_view_issue_uses_cached_issue_brief_without_llm(temp_conf
     cached_brief = IssueBrief(
         **_issue_brief_payload(
             one_liner="Cached tokenizer brief.",
-            why_it_fits="cached issue reason",
-            next_steps=["Use cached next step."],
+            problem_summary="cached issue reason",
+            first_steps=["Use cached next step."],
         )
+    )
+    cached_brief.metadata = issue_brief_metadata(
+        issue,
+        "cached issue reason",
+        IssueBriefProfileContext(
+            interests=["SGLang"],
+            skills=["Python"],
+            resources={"gpus": "4x RTX 4090"},
+        ),
     )
     cache = CacheStore(temp_config.notes_vault / "osmind" / ".cache" / "osmind.db")
     cache.upsert_issue(issue)
@@ -872,7 +895,11 @@ async def test_discover_view_issue_regenerates_cached_brief_when_reason_changes(
     from osmind.tui.screens.discover import DiscoverScreen
     from osmind.tui.widgets.issue_list import IssueTable
     from textual.widgets import Static
-    from osmind.engine.issue_brief import IssueBrief
+    from osmind.engine.issue_brief import (
+        IssueBrief,
+        IssueBriefProfileContext,
+        issue_brief_metadata,
+    )
     import osmind.engine.issue_brief
     import osmind.engine.llm
 
@@ -889,8 +916,17 @@ async def test_discover_view_issue_regenerates_cached_brief_when_reason_changes(
     stale_brief = IssueBrief(
         **_issue_brief_payload(
             one_liner="Old cached tokenizer brief.",
-            why_it_fits="old recommendation reason",
+            problem_summary="Old brief.",
         )
+    )
+    stale_brief.metadata = issue_brief_metadata(
+        issue,
+        "old recommendation reason",
+        IssueBriefProfileContext(
+            interests=["SGLang"],
+            skills=["Python"],
+            resources={"gpus": "4x RTX 4090"},
+        ),
     )
     cache = CacheStore(temp_config.notes_vault / "osmind" / ".cache" / "osmind.db")
     cache.upsert_issue(issue)
@@ -905,12 +941,12 @@ async def test_discover_view_issue_regenerates_cached_brief_when_reason_changes(
         def __init__(self, llm):
             pass
 
-        def generate(self, issue, reason=""):
+        def generate(self, issue, reason="", profile_context=None):
             calls.append((issue.number, reason))
             return IssueBrief(
                 **_issue_brief_payload(
                     one_liner="Fresh tokenizer brief.",
-                    why_it_fits=reason,
+                    problem_summary=reason,
                 )
             )
 
@@ -934,6 +970,86 @@ async def test_discover_view_issue_regenerates_cached_brief_when_reason_changes(
     assert "new recommendation reason" in str(source)
     assert "old recommendation reason" not in str(source)
     assert "new recommendation reason" in cache.get_issue_brief(issue.repo, issue.number)
+
+
+@pytest.mark.asyncio
+async def test_discover_view_issue_regenerates_cached_brief_when_profile_context_changes(temp_config, monkeypatch):
+    from osmind.cache.store import CacheStore
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    from osmind.tui.widgets.issue_list import IssueTable
+    from textual.widgets import Static
+    from osmind.engine.issue_brief import (
+        IssueBrief,
+        IssueBriefProfileContext,
+        issue_brief_metadata,
+    )
+    import osmind.engine.issue_brief
+    import osmind.engine.llm
+
+    issue = GHIssue(
+        42,
+        "Tokenizer leak",
+        "Original body stays visible.",
+        ["bug"],
+        "https://github.com/o/r/issues/42",
+        "o/r",
+        "open",
+        reason="same reason",
+    )
+    stale_context = IssueBriefProfileContext(
+        interests=["Other"],
+        skills=["Python"],
+        resources={"gpus": "none"},
+    )
+    cached_brief = IssueBrief(
+        **_issue_brief_payload(
+            one_liner="Old brief.",
+            problem_summary="Old brief.",
+        )
+    )
+    cached_brief.metadata = issue_brief_metadata(issue, "same reason", stale_context)
+    cache = CacheStore(temp_config.notes_vault / "osmind" / ".cache" / "osmind.db")
+    cache.upsert_issue(issue)
+    cache.update_issue_brief(issue.repo, issue.number, cached_brief.to_json())
+    calls = []
+
+    class DummyLLMClient:
+        def __init__(self, cfg):
+            pass
+
+    class RecordingIssueBriefGenerator:
+        def __init__(self, llm):
+            pass
+
+        def generate(self, issue, reason="", profile_context=None):
+            calls.append(profile_context)
+            return IssueBrief(
+                **_issue_brief_payload(
+                    one_liner="Fresh brief.",
+                    problem_summary="Fresh brief.",
+                )
+            )
+
+    monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
+    monkeypatch.setattr(osmind.engine.issue_brief, "IssueBriefGenerator", RecordingIssueBriefGenerator)
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        table = app.query_one(IssueTable)
+        table.populate([issue])
+        table.cursor_coordinate = (0, 0)
+        discover._issues_by_number = {str(issue.number): issue}
+
+        await discover.action_view_issue()
+
+        source = app.query_one("#issue-source-panel", Static).renderable
+
+    assert len(calls) == 1
+    assert calls[0].interests == ["SGLang"]
+    assert "Fresh brief." in str(source)
+    assert "Old brief." not in str(source)
 
 
 @pytest.mark.asyncio
@@ -961,12 +1077,12 @@ async def test_discover_view_issue_ignores_stale_slow_generation_result(temp_con
         def __init__(self, llm):
             pass
 
-        def generate(self, issue, reason=""):
+        def generate(self, issue, reason="", profile_context=None):
             if issue.number == 1:
                 slow_started.set()
                 release_slow.wait(timeout=2)
-                return IssueBrief(**_issue_brief_payload(one_liner="Slow first brief.", why_it_fits=reason))
-            return IssueBrief(**_issue_brief_payload(one_liner="Fast second brief.", why_it_fits=reason))
+                return IssueBrief(**_issue_brief_payload(one_liner="Slow first brief.", problem_summary=reason))
+            return IssueBrief(**_issue_brief_payload(one_liner="Fast second brief.", problem_summary=reason))
 
     monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
     monkeypatch.setattr(osmind.engine.issue_brief, "IssueBriefGenerator", OrderedIssueBriefGenerator)
@@ -1015,7 +1131,7 @@ async def test_discover_detail_tab_toggles_analysis_and_source_focus(temp_config
         def __init__(self, llm):
             pass
 
-        def generate(self, issue, reason=""):
+        def generate(self, issue, reason="", profile_context=None):
             return IssueBrief(**_issue_brief_payload(one_liner="摘要"))
 
     monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
@@ -1062,7 +1178,7 @@ async def test_discover_enter_key_opens_issue_detail_from_focused_table(temp_con
         def __init__(self, llm):
             pass
 
-        def generate(self, issue, reason=""):
+        def generate(self, issue, reason="", profile_context=None):
             return IssueBrief(**_issue_brief_payload(one_liner="摘要"))
 
     monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
@@ -1108,7 +1224,7 @@ async def test_discover_issue_detail_is_a_separate_view_and_escape_returns_to_li
         def __init__(self, llm):
             pass
 
-        def generate(self, issue, reason=""):
+        def generate(self, issue, reason="", profile_context=None):
             return IssueBrief(**_issue_brief_payload(one_liner="摘要"))
 
     monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
@@ -1153,7 +1269,7 @@ async def test_discover_q_returns_from_issue_detail_without_quitting(temp_config
         def __init__(self, llm):
             pass
 
-        def generate(self, issue, reason=""):
+        def generate(self, issue, reason="", profile_context=None):
             return IssueBrief(**_issue_brief_payload(one_liner="摘要"))
 
     monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
@@ -1934,7 +2050,11 @@ async def test_discover_generate_pack_writes_selected_issue(temp_config, monkeyp
 @pytest.mark.asyncio
 async def test_discover_generate_pack_includes_cached_issue_brief(temp_config, monkeypatch):
     from osmind.cache.store import CacheStore
-    from osmind.engine.issue_brief import IssueBrief
+    from osmind.engine.issue_brief import (
+        IssueBrief,
+        IssueBriefProfileContext,
+        issue_brief_metadata,
+    )
     from osmind.github.models import GHIssue
     from osmind.tui.screens.discover import DiscoverScreen
 
@@ -1952,9 +2072,18 @@ async def test_discover_generate_pack_includes_cached_issue_brief(temp_config, m
     brief = IssueBrief(
         **_issue_brief_payload(
             one_liner="Cached packet brief.",
-            why_it_fits="cached fit reason",
-            next_steps=["Carry this brief into the packet."],
+            problem_summary="cached fit reason",
+            first_steps=["Carry this brief into the packet."],
         )
+    )
+    brief.metadata = issue_brief_metadata(
+        issue,
+        "cached fit reason",
+        IssueBriefProfileContext(
+            interests=["SGLang"],
+            skills=["Python"],
+            resources={"gpus": "4x RTX 4090"},
+        ),
     )
     cache = CacheStore(temp_config.notes_vault / "osmind" / ".cache" / "osmind.db")
     cache.upsert_issue(issue)

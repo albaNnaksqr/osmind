@@ -488,7 +488,6 @@ class DiscoverScreen(Vertical):
         try:
             from osmind.engine.issue_brief import (
                 IssueBriefGenerator,
-                issue_brief_from_json,
                 render_issue_brief_markdown,
             )
             from osmind.engine.llm import LLMClient
@@ -497,15 +496,14 @@ class DiscoverScreen(Vertical):
 
             def _load_or_generate_brief_markdown():
                 cache = self._cache()
-                cached_json = cache.get_issue_brief(issue.repo, issue.number)
-                brief = None
-                if cached_json:
-                    brief = issue_brief_from_json(cached_json)
-                    if issue.reason and brief.why_it_fits != issue.reason:
-                        brief = None
+                brief = self._cached_issue_brief(issue)
                 if brief is None:
                     llm = LLMClient(llm_cfg)
-                    brief = IssueBriefGenerator(llm).generate(issue, reason=issue.reason)
+                    brief = IssueBriefGenerator(llm).generate(
+                        issue,
+                        reason=issue.reason,
+                        profile_context=self._issue_brief_profile_context(),
+                    )
                     cache.update_issue_brief(issue.repo, issue.number, brief.to_json())
                 return render_issue_brief_markdown(brief)
 
@@ -583,6 +581,15 @@ class DiscoverScreen(Vertical):
         cache_path = self.app.config.notes_vault / "osmind" / ".cache" / "osmind.db"
         return CacheStore(cache_path)
 
+    def _issue_brief_profile_context(self):
+        from osmind.engine.issue_brief import IssueBriefProfileContext
+
+        return IssueBriefProfileContext(
+            interests=list(self.app.config.interests),
+            skills=list(self.app.config.skills),
+            resources=dict(self.app.config.resources),
+        )
+
     def _pack_key(self, issue) -> tuple[str, str, int]:
         return (issue.repo, "issue", issue.number)
 
@@ -600,7 +607,7 @@ class DiscoverScreen(Vertical):
         return None
 
     def _cached_issue_brief(self, issue):
-        from osmind.engine.issue_brief import issue_brief_from_json
+        from osmind.engine.issue_brief import is_issue_brief_current, issue_brief_from_json
 
         cached_json = self._cache().get_issue_brief(issue.repo, issue.number)
         if not cached_json:
@@ -609,7 +616,12 @@ class DiscoverScreen(Vertical):
             brief = issue_brief_from_json(cached_json)
         except Exception:
             return None
-        if issue.reason and brief.why_it_fits != issue.reason:
+        if not is_issue_brief_current(
+            brief,
+            issue,
+            issue.reason,
+            self._issue_brief_profile_context(),
+        ):
             return None
         return brief
 
