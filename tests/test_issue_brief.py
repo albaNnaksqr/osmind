@@ -13,7 +13,7 @@ from osmind.engine.issue_brief import (
     issue_brief_metadata,
     render_issue_brief_markdown,
 )
-from osmind.github.models import GHIssue
+from osmind.github.models import GHComment, GHIssue
 
 
 def _issue() -> GHIssue:
@@ -27,6 +27,22 @@ def _issue() -> GHIssue:
         state="open",
         reason="Strong model-adaptation fit.",
     )
+
+
+def _comment(index: int, body: str) -> GHComment:
+    return GHComment(
+        author=f"user-{index}",
+        body=body,
+        url=f"https://github.com/o/r/issues/42#issuecomment-{index}",
+        created_at=f"2026-05-{index:02d}T00:00:00+00:00",
+    )
+
+
+def _issue_with_comments(*comment_bodies: str) -> GHIssue:
+    issue = _issue()
+    issue.updated_at = "2026-05-15T01:02:03+00:00"
+    issue.comments = [_comment(index, body) for index, body in enumerate(comment_bodies, 1)]
+    return issue
 
 
 def _brief_payload() -> dict:
@@ -89,16 +105,33 @@ def _legacy_brief_payload() -> dict:
 def test_issue_brief_generator_parses_structured_json():
     llm = MagicMock()
     llm.chat.return_value = json.dumps(_brief_payload())
-    issue = _issue()
+    issue = _issue_with_comments(
+        "Check the existing registry wiring.",
+        "The Qwen2 adapter already covers most config glue.",
+        "Please keep tokenizer compatibility in mind.",
+        "A minimal loader smoke test would help.",
+        "We should verify config aliases before touching weights.",
+        "This sixth comment should not appear in the prompt.",
+    )
+    profile_context = IssueBriefProfileContext(
+        interests=["SGLang inference optimization"],
+        skills=["Python"],
+        resources={
+            "zeta": "late",
+            "alpha": "first",
+            "nested": {"gpu": "4090", "ram_gb": 64},
+        },
+    )
     expected_metadata = issue_brief_metadata(
         issue,
         "Recommended by ranker",
-        IssueBriefProfileContext(interests=[], skills=[], resources={}),
+        profile_context,
     )
 
     brief = IssueBriefGenerator(llm).generate(
         issue,
         reason="Recommended by ranker",
+        profile_context=profile_context,
     )
     expected = IssueBrief(**_brief_payload())
     expected.metadata = expected_metadata
@@ -111,7 +144,20 @@ def test_issue_brief_generator_parses_structured_json():
     assert "Issue #42" in prompt
     assert "Labels: good first issue, model" in prompt
     assert "Recommendation reason: Recommended by ranker" in prompt
+    assert "Answer in Chinese" in prompt
+    assert "Return strict JSON only" in prompt
+    assert "User profile:" in prompt
+    assert "Interests: SGLang inference optimization" in prompt
+    assert "Skills: Python" in prompt
+    assert "Resources: alpha: first, nested: {gpu: 4090, ram_gb: 64}, zeta: late" in prompt
+    assert "- user-1: Check the existing registry wiring." in prompt
+    assert "- user-5: We should verify config aliases before touching weights." in prompt
+    assert "This sixth comment should not appear in the prompt." not in prompt
     assert "one_liner" in prompt
+    assert "problem_summary" in prompt
+    assert "matched_interests" in prompt
+    assert "validation_path" in prompt
+    assert "agent_prompt" in prompt
     assert llm.chat.call_args.kwargs["max_tokens"] == 1400
 
 
@@ -157,6 +203,128 @@ def test_issue_brief_cache_metadata_detects_changed_reason():
     brief.metadata = issue_brief_metadata(issue, "Recommended by ranker", profile_context)
 
     assert not is_issue_brief_current(brief, issue, "Different reason", profile_context)
+
+
+def test_issue_brief_profile_prompt_and_hash_are_stable_across_resource_insertion_order():
+    issue = _issue()
+    first = IssueBriefProfileContext(
+        interests=["Infra"],
+        skills=["Python"],
+        resources={
+            "zeta": "late",
+            "alpha": "first",
+            "nested": {"gpu": "4090", "ram_gb": 64},
+        },
+    )
+    second = IssueBriefProfileContext(
+        interests=["Infra"],
+        skills=["Python"],
+        resources={
+            "nested": {"ram_gb": 64, "gpu": "4090"},
+            "alpha": "first",
+            "zeta": "late",
+        },
+    )
+
+    first_metadata = issue_brief_metadata(issue, "Recommended by ranker", first)
+    second_metadata = issue_brief_metadata(issue, "Recommended by ranker", second)
+
+    assert first_metadata.profile_hash == second_metadata.profile_hash
+    assert first.to_prompt() == second.to_prompt()
+    assert "Resources: alpha: first, nested: {gpu: 4090, ram_gb: 64}, zeta: late" in first.to_prompt()
+
+
+def test_issue_brief_cache_metadata_ignores_sixth_comment_body_change():
+    issue = _issue_with_comments(
+        "first comment",
+        "second comment",
+        "third comment",
+        "fourth comment",
+        "fifth comment",
+        "sixth comment",
+    )
+    profile_context = IssueBriefProfileContext(
+        interests=["SGLang inference optimization"],
+        skills=["Python"],
+        resources={"gpus": "4x RTX 4090"},
+    )
+    brief = IssueBrief(**_brief_payload())
+    brief.metadata = issue_brief_metadata(issue, "Recommended by ranker", profile_context)
+
+    changed_issue = _issue_with_comments(
+        "first comment",
+        "second comment",
+        "third comment",
+        "fourth comment",
+        "fifth comment",
+        "sixth comment changed outside prompt window",
+    )
+
+    assert is_issue_brief_current(brief, changed_issue, "Recommended by ranker", profile_context)
+
+
+def test_issue_brief_cache_metadata_detects_first_five_comment_body_change():
+    issue = _issue_with_comments(
+        "first comment",
+        "second comment",
+        "third comment",
+        "fourth comment",
+        "fifth comment",
+        "sixth comment",
+    )
+    profile_context = IssueBriefProfileContext(
+        interests=["SGLang inference optimization"],
+        skills=["Python"],
+        resources={"gpus": "4x RTX 4090"},
+    )
+    brief = IssueBrief(**_brief_payload())
+    brief.metadata = issue_brief_metadata(issue, "Recommended by ranker", profile_context)
+
+    changed_issue = _issue_with_comments(
+        "first comment changed inside prompt window",
+        "second comment",
+        "third comment",
+        "fourth comment",
+        "fifth comment",
+        "sixth comment",
+    )
+
+    assert not is_issue_brief_current(brief, changed_issue, "Recommended by ranker", profile_context)
+
+
+def test_issue_brief_cache_metadata_detects_issue_body_change():
+    issue = _issue_with_comments("first comment")
+    profile_context = IssueBriefProfileContext(
+        interests=["SGLang inference optimization"],
+        skills=["Python"],
+        resources={"gpus": "4x RTX 4090"},
+    )
+    brief = IssueBrief(**_brief_payload())
+    brief.metadata = issue_brief_metadata(issue, "Recommended by ranker", profile_context)
+
+    changed_issue = _issue_with_comments("first comment")
+    changed_issue.body = "Need to add Qwen3MoE model support with a new tokenizer path."
+
+    assert not is_issue_brief_current(brief, changed_issue, "Recommended by ranker", profile_context)
+
+
+def test_issue_brief_cache_metadata_detects_profile_change():
+    issue = _issue_with_comments("first comment")
+    profile_context = IssueBriefProfileContext(
+        interests=["SGLang inference optimization"],
+        skills=["Python"],
+        resources={"gpus": "4x RTX 4090"},
+    )
+    brief = IssueBrief(**_brief_payload())
+    brief.metadata = issue_brief_metadata(issue, "Recommended by ranker", profile_context)
+
+    changed_profile = IssueBriefProfileContext(
+        interests=["SGLang inference optimization"],
+        skills=["Python", "CUDA"],
+        resources={"gpus": "4x RTX 4090"},
+    )
+
+    assert not is_issue_brief_current(brief, issue, "Recommended by ranker", changed_profile)
 
 
 def test_issue_brief_generator_normalizes_blank_optional_list_items():

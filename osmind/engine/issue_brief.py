@@ -13,6 +13,10 @@ _SYSTEM = """\
 You write structured issue briefs for developers evaluating open-source work.
 Only return valid JSON with exactly the requested fields. Do not include markdown."""
 
+_ISSUE_BODY_LIMIT = 4000
+_COMMENT_BODY_LIMIT = 800
+_COMMENT_PROMPT_LIMIT = 5
+
 
 @dataclass
 class IssueBriefMetadata:
@@ -293,32 +297,12 @@ def issue_brief_metadata(
     reason: str,
     profile_context: IssueBriefProfileContext,
 ) -> IssueBriefMetadata:
+    normalized_profile = _normalized_profile_payload(profile_context)
     return IssueBriefMetadata(
         source_updated_at=issue.updated_at or "",
         recommendation_reason=reason or issue.reason or "",
-        profile_hash=_hash_json(
-            {
-                "interests": profile_context.interests,
-                "skills": profile_context.skills,
-                "resources": profile_context.resources,
-            }
-        ),
-        source_hash=_hash_json(
-            {
-                "title": issue.title,
-                "body": issue.body,
-                "labels": issue.labels,
-                "comments": [
-                    {
-                        "author": comment.author,
-                        "body": comment.body,
-                        "created_at": comment.created_at,
-                        "url": comment.url,
-                    }
-                    for comment in issue.comments
-                ],
-            }
-        ),
+        profile_hash=_hash_json(normalized_profile),
+        source_hash=_hash_json(_normalized_issue_source_payload(issue)),
     )
 
 
@@ -397,9 +381,7 @@ def _format_prompt(
 ) -> str:
     labels = ", ".join(issue.labels) or "none"
     recommendation_reason = reason or issue.reason or "(none)"
-    comments = "\n".join(
-        f"- {comment.author}: {comment.body[:800]}" for comment in issue.comments[:5]
-    ) or "- No cached comments."
+    comments = _format_comments(issue.comments)
     expected_fields = "\n".join(
         [
             '- "one_liner": string, Chinese',
@@ -425,7 +407,7 @@ def _format_prompt(
         f"Labels: {labels}\n"
         f"Recommendation reason: {recommendation_reason}\n\n"
         f"User profile:\n{profile_context.to_prompt()}\n\n"
-        f"Issue body:\n{issue.body[:4000] or '(empty)'}\n\n"
+        f"Issue body:\n{_normalize_issue_body(issue.body) or '(empty)'}\n\n"
         f"Comments:\n{comments}\n\n"
         "Return a JSON object with these expected fields:\n"
         f"{expected_fields}\n\n"
@@ -492,12 +474,78 @@ def _coerce_str_list(value: Any) -> list[str]:
 def _format_mapping(values: dict[str, Any]) -> str:
     if not values:
         return "none"
-    return ", ".join(f"{key}: {value}" for key, value in values.items())
+    return ", ".join(
+        f"{key}: {_format_prompt_value(values[key])}" for key in sorted(values)
+    )
 
 
 def _hash_json(value: dict[str, Any]) -> str:
     payload = json.dumps(value, ensure_ascii=False, sort_keys=True)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _format_prompt_value(value: Any) -> str:
+    if isinstance(value, dict):
+        return "{" + _format_mapping(value) + "}"
+    if isinstance(value, list):
+        return "[" + ", ".join(_format_prompt_value(item) for item in value) + "]"
+    return str(value)
+
+
+def _normalize_issue_body(body: str) -> str:
+    return body[:_ISSUE_BODY_LIMIT]
+
+
+def _normalize_comment_body(body: str) -> str:
+    return body[:_COMMENT_BODY_LIMIT]
+
+
+def _normalized_comment_payload(comment: Any) -> dict[str, str]:
+    return {
+        "author": comment.author,
+        "body": _normalize_comment_body(comment.body),
+    }
+
+
+def _normalized_issue_source_payload(issue: GHIssue) -> dict[str, Any]:
+    return {
+        "title": issue.title,
+        "body": _normalize_issue_body(issue.body),
+        "labels": list(issue.labels),
+        "comments": [
+            _normalized_comment_payload(comment)
+            for comment in issue.comments[:_COMMENT_PROMPT_LIMIT]
+        ],
+    }
+
+
+def _normalized_profile_payload(profile_context: IssueBriefProfileContext) -> dict[str, Any]:
+    return {
+        "interests": list(profile_context.interests),
+        "skills": list(profile_context.skills),
+        "resources": _normalize_json_value(profile_context.resources),
+    }
+
+
+def _normalize_json_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _normalize_json_value(value[key]) for key in sorted(value)}
+    if isinstance(value, list):
+        return [_normalize_json_value(item) for item in value]
+    return value
+
+
+def _format_comments(comments: list[Any]) -> str:
+    normalized_comments = [
+        _normalized_comment_payload(comment)
+        for comment in comments[:_COMMENT_PROMPT_LIMIT]
+    ]
+    return (
+        "\n".join(
+            f"- {comment['author']}: {comment['body']}" for comment in normalized_comments
+        )
+        or "- No cached comments."
+    )
 
 
 def _render_list(items: list[str], *, code: bool = False) -> str:
