@@ -221,7 +221,7 @@ def test_issue_brief_from_json_requires_agent_prompt_for_canonical_payload():
 
 @pytest.mark.parametrize(
     "missing_field",
-    ["problem_summary", "resource_assessment", "agent_prompt"],
+    ["one_liner", "problem_summary", "resource_assessment", "agent_prompt"],
 )
 def test_issue_brief_from_json_does_not_fall_back_to_legacy_fields_for_required_values(missing_field: str):
     payload = {
@@ -233,6 +233,14 @@ def test_issue_brief_from_json_does_not_fall_back_to_legacy_fields_for_required_
         "problem_summary": "Legacy canonical summary.",
     }
     payload[missing_field] = ""
+
+    with pytest.raises(ValueError):
+        issue_brief_from_json(json.dumps(payload))
+
+
+def test_issue_brief_from_json_requires_one_liner_for_canonical_payload():
+    payload = _brief_payload()
+    del payload["one_liner"]
 
     with pytest.raises(ValueError):
         issue_brief_from_json(json.dumps(payload))
