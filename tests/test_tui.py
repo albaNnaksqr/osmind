@@ -2103,6 +2103,63 @@ async def test_discover_generate_pack_includes_cached_issue_brief(temp_config, m
 
 
 @pytest.mark.asyncio
+async def test_discover_start_work_writes_pack_with_agent_prompt(temp_config, monkeypatch):
+    from osmind.engine.issue_brief import IssueBrief
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    import osmind.engine.issue_brief
+    import osmind.engine.llm
+
+    issue = GHIssue(
+        number=43,
+        title="Tokenizer leak",
+        body="The tokenizer cache keeps growing. Please add a pytest regression.",
+        labels=["bug"],
+        url="https://github.com/o/r/issues/43",
+        repo="o/r",
+        state="open",
+        updated_at="u43",
+        reason="资源足够，适合先写最小复现。",
+        priority="high",
+        fit="high",
+        resource_fit="ok",
+        actionability="high",
+    )
+
+    class DummyLLMClient:
+        def __init__(self, cfg):
+            pass
+
+    class DummyIssueBriefGenerator:
+        def __init__(self, llm):
+            pass
+
+        def generate(self, issue, reason="", profile_context=None):
+            return IssueBrief(
+                **_issue_brief_payload(
+                    agent_prompt="请先定位 tokenizer cache 并写最小复现测试。",
+                )
+            )
+
+    monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
+    monkeypatch.setattr(osmind.engine.issue_brief, "IssueBriefGenerator", DummyIssueBriefGenerator)
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        monkeypatch.setattr(discover, "_get_selected_issue", lambda: issue)
+        await discover.action_start_work()
+
+    path = (
+        temp_config.notes_vault / "osmind" / "o_r" / "issue-43-tokenizer-leak.md"
+    )
+    markdown = path.read_text(encoding="utf-8")
+    assert "## Agent Prompt" in markdown
+    assert "请先定位 tokenizer cache 并写最小复现测试。" in markdown
+    assert "## First 30 Minutes" in markdown
+
+
+@pytest.mark.asyncio
 async def test_discover_start_work_generates_packet_and_shows_plan(temp_config, monkeypatch):
     from osmind.github.models import GHIssue
     from osmind.tui.screens.discover import DiscoverScreen

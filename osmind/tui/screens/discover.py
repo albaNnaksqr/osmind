@@ -486,28 +486,10 @@ class DiscoverScreen(Vertical):
         loader = self.query_one("#loader", LoadingIndicator)
         loader.display = True
         try:
-            from osmind.engine.issue_brief import (
-                IssueBriefGenerator,
-                render_issue_brief_markdown,
-            )
-            from osmind.engine.llm import LLMClient
+            from osmind.engine.issue_brief import render_issue_brief_markdown
 
-            llm_cfg = self.app.config.llm
-
-            def _load_or_generate_brief_markdown():
-                cache = self._cache()
-                brief = self._cached_issue_brief(issue)
-                if brief is None:
-                    llm = LLMClient(llm_cfg)
-                    brief = IssueBriefGenerator(llm).generate(
-                        issue,
-                        reason=issue.reason,
-                        profile_context=self._issue_brief_profile_context(),
-                    )
-                    cache.update_issue_brief(issue.repo, issue.number, brief.to_json())
-                return render_issue_brief_markdown(brief)
-
-            brief_markdown = await asyncio.to_thread(_load_or_generate_brief_markdown)
+            brief = await self._load_or_generate_issue_brief(issue)
+            brief_markdown = render_issue_brief_markdown(brief)
             if self._is_current_issue_detail_request(request_id):
                 source.update(_format_issue_source(issue, brief_markdown))
         except Exception as e:
@@ -625,19 +607,36 @@ class DiscoverScreen(Vertical):
             return None
         return brief
 
+    async def _load_or_generate_issue_brief(self, issue):
+        cached = self._cached_issue_brief(issue)
+        if cached is not None:
+            return cached
+
+        def _generate():
+            from osmind.engine.issue_brief import IssueBriefGenerator
+            from osmind.engine.llm import LLMClient
+
+            llm = LLMClient(self.app.config.llm)
+            brief = IssueBriefGenerator(llm).generate(
+                issue,
+                reason=issue.reason,
+                profile_context=self._issue_brief_profile_context(),
+            )
+            self._cache().update_issue_brief(issue.repo, issue.number, brief.to_json())
+            return brief
+
+        return await asyncio.to_thread(_generate)
+
     async def action_start_work(self) -> None:
         issue = self._get_selected_issue()
         if not issue:
             self.notify("先选中一个 issue", severity="warning")
             return
         try:
-            path = self._pack_path_for_issue(issue)
-            if path is None:
-                brief = self._cached_issue_brief(issue)
-                path = await asyncio.to_thread(lambda: self._library().write_issue_pack(issue, brief=brief))
-                self._pack_paths_by_key[self._pack_key(issue)] = str(path)
-                self._update_freshness_status()
+            pack_was_missing = self._pack_path_for_issue(issue) is None
             path = await self._set_issue_decision(issue, "continue")
+            if pack_was_missing:
+                self._update_freshness_status()
             markdown = path.read_text(encoding="utf-8")
             self.query_one("#start-work-panel", Static).update(
                 format_start_work_from_packet(markdown, self.app.config.resources)
@@ -665,7 +664,14 @@ class DiscoverScreen(Vertical):
     async def _set_issue_decision(self, issue, decision: str) -> Path:
         path = self._pack_path_for_issue(issue)
         if path is None:
-            brief = self._cached_issue_brief(issue)
+            brief = None
+            try:
+                brief = await self._load_or_generate_issue_brief(issue)
+            except Exception:
+                log_exception(
+                    self.app.config.notes_vault,
+                    f"Failed to generate Issue Brief before writing pack for {issue.repo}#{issue.number}",
+                )
             path = await asyncio.to_thread(lambda: self._library().write_issue_pack(issue, brief=brief))
             self._pack_paths_by_key[self._pack_key(issue)] = str(path)
         path = await asyncio.to_thread(
@@ -686,7 +692,14 @@ class DiscoverScreen(Vertical):
             self.notify("先选中一个 issue", severity="warning")
             return
         try:
-            brief = self._cached_issue_brief(issue)
+            brief = None
+            try:
+                brief = await self._load_or_generate_issue_brief(issue)
+            except Exception:
+                log_exception(
+                    self.app.config.notes_vault,
+                    f"Failed to generate Issue Brief before writing pack for {issue.repo}#{issue.number}",
+                )
             path = await asyncio.to_thread(lambda: self._library().write_issue_pack(issue, brief=brief))
             self._pack_paths_by_key[self._pack_key(issue)] = str(path)
             self.notify(f"Contribution Packet saved: {path}", timeout=5)
