@@ -6,11 +6,11 @@ from osmind.packs.renderer import parse_pack_frontmatter
 
 
 START_WORK_SECTIONS = [
-    "First 10 Minutes",
-    "Files And Symbols To Inspect",
-    "Validation Path",
-    "Continue Or Stop Criteria",
-    "Agent Exploration Prompt",
+    ("First 10 Minutes", ("First 30 Minutes", "First 10 Minutes")),
+    ("Files And Symbols To Inspect", ("Files And Symbols To Inspect",)),
+    ("Validation Path", ("Validation Path",)),
+    ("Continue Or Stop Criteria", ("Continue Or Stop Criteria",)),
+    ("Agent Exploration Prompt", ("Agent Prompt", "Agent Exploration Prompt")),
 ]
 
 
@@ -41,13 +41,35 @@ def format_start_work_from_packet(markdown: str, resources: dict | None = None) 
             ]
         )
 
-    for section in START_WORK_SECTIONS:
-        body = sections.get(section, "").strip()
+    preferred_sections = _workflow_sections_for_packet(frontmatter, sections)
+    for section, aliases in preferred_sections:
+        body = ""
+        for alias in aliases:
+            body = sections.get(alias, "").strip()
+            if body:
+                break
         if not body:
             body = _missing_section_text(section)
         lines.extend(["", f"[bold]{section}[/bold]", body])
 
     return "\n".join(lines).rstrip()
+
+
+def _workflow_sections_for_packet(frontmatter: dict[str, object], sections: dict[str, str]) -> list[tuple[str, tuple[str, ...]]]:
+    source_type = frontmatter.get("source_type")
+    has_brief_sections = (
+        source_type == "issue"
+        and any(title in sections for title in ("Issue Brief", "First 30 Minutes", "Agent Prompt"))
+    )
+    if has_brief_sections:
+        return [
+            ("First 30 Minutes", ("First 30 Minutes", "First 10 Minutes")),
+            ("Files And Symbols To Inspect", ("Files And Symbols To Inspect",)),
+            ("Validation Path", ("Validation Path",)),
+            ("Continue Or Stop Criteria", ("Continue Or Stop Criteria",)),
+            ("Agent Prompt", ("Agent Prompt", "Agent Exploration Prompt")),
+        ]
+    return START_WORK_SECTIONS
 
 
 def _packet_sections(markdown: str) -> dict[str, str]:
@@ -67,7 +89,7 @@ def _format_resources(resources: dict) -> str:
 
 
 def _missing_section_text(section: str) -> str:
-    if section == "First 10 Minutes":
+    if section in {"First 10 Minutes", "First 30 Minutes"}:
         return "Open the packet and identify the first concrete read or reproduction step."
     if section == "Files And Symbols To Inspect":
         return "No explicit files or symbols were captured. Search from the title and source text first."
@@ -75,6 +97,6 @@ def _missing_section_text(section: str) -> str:
         return "No validation path was captured. Do not implement until you can name the smallest check."
     if section == "Continue Or Stop Criteria":
         return "Continue only if the problem, likely module, and validation evidence are clear."
-    if section == "Agent Exploration Prompt":
+    if section in {"Agent Exploration Prompt", "Agent Prompt"}:
         return "Ask an agent to summarize known facts, likely files, and a minimal validation path before implementation."
     return "Not captured in this packet."

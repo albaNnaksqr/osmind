@@ -264,16 +264,52 @@ def test_issue_pack_uses_structured_brief_sections():
     assert "Tokenizer cache grows without bound." in sections["Issue Brief"]
     assert "### Problem Summary" in sections["Issue Brief"]
     assert "### Background" in sections["Issue Brief"]
+    assert sections["Issue Brief"].count("Tokenizer cache owns sequence memoization.") == 1
+    assert sections["Issue Brief"].count("Tokenizer cache initialization and eviction.") == 1
     assert "Interest: SGLang" in sections["Why It May Fit You"]
     assert "Skill: Python" in sections["Why It May Fit You"]
     assert "### Matched Interests" in sections["Why It May Fit You"]
     assert "### Matched Skills" in sections["Why It May Fit You"]
     assert "### Resource Assessment" in sections["Why It May Fit You"]
     assert "### Evidence" in sections["Why It May Fit You"]
+    assert "### Ranker Reason" not in sections["Why It May Fit You"]
     assert "Issue 可能缺少完整复现脚本" in sections["Risks And Missing Evidence"]
+    assert sections["Risks And Missing Evidence"].count("Issue 可能缺少完整复现脚本") == 1
     assert "复现测试先失败" in sections["Validation Path"]
     assert "搜索 tokenizer cache 代码" in sections["First 30 Minutes"]
     assert "请在 o/r 中分析 tokenizer cache leak issue" in sections["Agent Prompt"]
+
+
+def test_from_issue_pack_with_structured_brief_includes_non_structured_ranker_reason():
+    issue = GHIssue(
+        number=42,
+        title="tokenizer cache leak issue",
+        body="Long sequences leak memory.",
+        labels=["bug", "tokenizer"],
+        url="https://github.com/o/r/issues/42",
+        repo="o/r",
+        state="open",
+        reason="Interest: SGLang\nSkill: Python\n该问题与最新 tokenizer cache 内部的状态序列化路径相关。",
+    )
+    brief = IssueBrief(
+        one_liner="Tokenizer cache grows without bound.",
+        problem_summary="The tokenizer retains entries for long sequences.",
+        background=["Tokenizer cache owns sequence memoization.", "Tokenizer cache initialization and eviction."],
+        matched_interests=["SGLang"],
+        matched_skills=["Python"],
+        resource_assessment="Difficulty: medium; Readiness: ready.",
+        evidence=["Tokenizer cache keeps long-sequence states."],
+        risks=["Issue 可能缺少完整复现脚本", "性能基线还未确认"],
+        first_steps=["搜索 tokenizer cache 代码", "跑一遍最小复现路径"],
+        validation_path=["复现测试先失败", "如何确认缓存键是否越界"],
+        agent_prompt="请在 o/r 中分析 tokenizer cache leak issue",
+    )
+
+    pack = PackGenerator().from_issue(issue, brief=brief)
+    sections = {section.title: section.body for section in pack.sections}
+
+    assert "### Ranker Reason" in sections["Why It May Fit You"]
+    assert "该问题与最新 tokenizer cache 内部的状态序列化路径相关。" in sections["Why It May Fit You"]
 
 
 def test_from_issue_uses_discover_recommendation_reason_in_fit_section():

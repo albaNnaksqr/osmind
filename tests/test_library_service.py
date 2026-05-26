@@ -309,8 +309,8 @@ def test_write_issue_pack_can_include_issue_brief(tmp_path):
 
     risks_section = markdown[risks:first_30]
     assert "### Risks" in risks_section
-    assert "### Missing Evidence" in risks_section
     assert "## Risks And Missing Evidence" in markdown
+    assert risks_section.count("Issue 可能缺少完整复现脚本") == 1
     assert "Issue 可能缺少完整复现脚本" in markdown
     assert "## First 30 Minutes" in markdown
     assert "阅读并搜索 tokenizer cache 相关实现" in markdown

@@ -86,3 +86,51 @@ decision: defer
     assert "Do not start yet" in summary
     assert "Decision: defer" in summary
     assert "Resources: gpus: 1x RTX 4090" in summary
+
+
+def test_start_work_summary_uses_new_issue_brief_section_titles():
+    from osmind.tui.workflow import format_start_work_from_packet
+
+    markdown = """---
+type: osmind-contribution-packet
+source_type: issue
+repo: o/r
+number: 42
+title: Tokenizer leak
+url: https://github.com/o/r/issues/42
+decision: continue
+---
+
+# Issue #42: Tokenizer leak
+
+## Why It May Fit You
+
+推荐理由: current GPU is enough for a repro.
+
+## First 30 Minutes
+
+1. Restate the report.
+2. Search for `tokenizer`.
+
+## Files And Symbols To Inspect
+
+- `tokenizer`
+
+## Validation Path
+
+- Run the smallest tokenizer regression test.
+
+## Agent Prompt
+
+请先对 Issue #42 进行结构化研读。
+"""
+
+    summary = format_start_work_from_packet(markdown, {"gpus": "4x RTX 4090"})
+
+    assert "First 30 Minutes" in summary
+    assert "Agent Prompt" in summary
+    assert "Restate the report." in summary
+    assert "Search for `tokenizer`" in summary
+    assert "请先对 Issue #42 进行结构化研读。" in summary
+    assert "First 10 Minutes" not in summary
+    assert "Open the packet and identify the first concrete read or reproduction step." not in summary

@@ -172,11 +172,23 @@ def _tagged_items(items: list[str], label: str) -> list[str]:
 def _brief_ranker_reason(issue: GHIssue) -> str:
     if not issue.reason:
         return ""
-    return "\n\n### Ranker Reason\n" + "\n".join(["- " + issue.reason.strip()])
+    reason_lines = [line.strip() for line in issue.reason.splitlines() if line.strip()]
+    evidence_lines = [
+        line for line in reason_lines if not _is_structured_reason_line(line)
+    ]
+    if not evidence_lines:
+        return ""
+    return "\n\n### Ranker Reason\n" + "\n".join("- " + line for line in evidence_lines)
+
+
+def _is_structured_reason_line(line: str) -> bool:
+    lowered = line.lower()
+    return lowered.startswith(("interest:", "interest：", "skill:", "skill：", "兴趣:", "技能:"))
 
 
 def _issue_brief_summary(brief: IssueBrief) -> str:
-    background = _plain_list(brief.project_context + brief.background_to_learn)
+    background = list(dict.fromkeys(brief.project_context + brief.background_to_learn))
+    background = _plain_list(background)
     return "\n".join(
         [
             "### One-Liner",
@@ -230,15 +242,7 @@ def _tagged_evidence(issue: GHIssue, brief: IssueBrief) -> list[str]:
 
 
 def _issue_brief_risks(brief: IssueBrief) -> str:
-    return "\n".join(
-        [
-            "### Risks",
-            _plain_list(brief.risks),
-            "",
-            "### Missing Evidence",
-            _plain_list(brief.risks),
-        ]
-    )
+    return "\n".join(["### Risks", _plain_list(brief.risks)])
 
 
 def _issue_brief_agent_prompt(issue: GHIssue, brief: IssueBrief) -> str:
