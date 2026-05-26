@@ -126,6 +126,14 @@ def test_discover_agent_launchers_are_not_shown_as_primary_bindings():
     assert "launch_codex" not in binding_text
 
 
+def test_discover_selected_repo_before_compose_is_not_ready():
+    from osmind.tui.screens.discover import DiscoverScreen
+
+    discover = DiscoverScreen()
+
+    assert discover._selected_repo(notify=False) is None
+
+
 @pytest.mark.asyncio
 async def test_discover_hidden_agent_shortcuts_still_dispatch(temp_config, monkeypatch):
     from osmind.tui.screens.discover import DiscoverScreen

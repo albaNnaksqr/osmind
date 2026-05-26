@@ -3,6 +3,7 @@ import asyncio
 import os
 from pathlib import Path
 from textual.app import ComposeResult
+from textual.css.query import NoMatches
 from textual.widgets import Label, LoadingIndicator, Select, Static
 from textual.containers import Vertical, Horizontal
 from osmind.decision import format_decision_panel
@@ -253,7 +254,10 @@ class DiscoverScreen(Vertical):
             loader.display = False
 
     def _selected_repo(self, *, notify: bool = True) -> str | None:
-        repo_select = self.query_one("#repo-select", Select)
+        try:
+            repo_select = self.query_one("#repo-select", Select)
+        except NoMatches:
+            return None
         if repo_select.value is Select.BLANK:
             if notify:
                 self.notify("请先选择 repo", severity="warning")
