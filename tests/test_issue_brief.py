@@ -109,11 +109,23 @@ def test_issue_brief_generator_falls_back_when_llm_returns_invalid_json():
     brief = IssueBriefGenerator(llm).generate(issue, reason="Good first issue with clear adapter template.")
 
     assert brief.one_liner == "Add Qwen3MoE support"
-    assert "Good first issue with clear adapter template." in brief.problem_summary
+    assert "Need to add Qwen3MoE model support." in brief.problem_summary
     assert brief.background == ["Repo: o/r", "Labels: good first issue, model", "Issue URL: https://github.com/o/r/issues/42"]
     assert brief.first_steps[0] == "Read the issue body and linked discussion."
     assert brief.matched_interests == []
     assert brief.risks
+
+
+def test_issue_brief_generator_sets_missing_recommendation_reason():
+    payload = _brief_payload()
+    payload.pop("metadata")
+    llm = MagicMock()
+    llm.chat.return_value = json.dumps(payload)
+    issue = _issue()
+
+    brief = IssueBriefGenerator(llm).generate(issue, reason="Clear model-adaptation fit.")
+
+    assert brief.metadata.recommendation_reason == "Clear model-adaptation fit."
 
 
 def test_issue_brief_generator_falls_back_when_list_fields_are_blank():
@@ -201,6 +213,18 @@ def test_issue_brief_roundtrip_preserves_legacy_why_it_fits():
 
     assert parsed.why_it_fits == legacy["why_it_fits"]
     assert parsed.why_it_fits == parsed.metadata.recommendation_reason
+
+
+def test_issue_brief_roundtrip_preserves_legacy_compatibility_read_properties():
+    legacy = _legacy_brief_payload()
+    legacy.pop("background_to_learn", None)
+    brief = IssueBrief(**legacy)
+
+    parsed = issue_brief_from_json(brief.to_json())
+
+    assert parsed.difficulty == legacy["difficulty"]
+    assert parsed.readiness == legacy["readiness"]
+    assert parsed.background_to_learn == legacy["project_context"]
 
 
 def test_issue_brief_from_json_requires_resource_assessment_for_canonical_payload():

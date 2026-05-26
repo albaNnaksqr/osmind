@@ -121,8 +121,8 @@ class IssueBrief:
 
         self._plain_explanation = _coerce_scalar_string(plain_explanation, default="")
         self._why_it_fits = _coerce_scalar_string(why_it_fits, default="")
-        self._difficulty = _coerce_scalar_string(difficulty, default="unknown")
-        self._readiness = _coerce_scalar_string(readiness, default="needs review")
+        self._difficulty = _coerce_scalar_string(difficulty)
+        self._readiness = _coerce_scalar_string(readiness)
         if metadata is None:
             self.metadata = IssueBriefMetadata()
         elif isinstance(metadata, dict):
@@ -158,15 +158,27 @@ class IssueBrief:
 
     @property
     def difficulty(self) -> str:
-        return self._difficulty
+        if self._difficulty:
+            return self._difficulty
+        parsed_difficulty = _parse_profile_value_from_assessment(
+            self.resource_assessment,
+            "difficulty",
+        )
+        return parsed_difficulty or "unknown"
 
     @property
     def readiness(self) -> str:
-        return self._readiness
+        if self._readiness:
+            return self._readiness
+        parsed_readiness = _parse_profile_value_from_assessment(
+            self.resource_assessment,
+            "readiness",
+        )
+        return parsed_readiness or "needs review"
 
     @property
     def background_to_learn(self) -> list[str]:
-        return self._background_to_learn
+        return self._background_to_learn or self.background
 
     @property
     def next_steps(self) -> list[str]:
@@ -187,9 +199,11 @@ class IssueBriefGenerator:
     def generate(self, issue: GHIssue, reason: str = "") -> IssueBrief:
         raw = self._llm.chat(_SYSTEM, _format_prompt(issue, reason), max_tokens=1024)
         try:
-            return issue_brief_from_json(raw)
+            brief = issue_brief_from_json(raw)
         except (json.JSONDecodeError, TypeError, ValueError):
-            return _fallback_brief(issue, reason)
+            brief = _fallback_brief(issue, reason)
+        _hydrate_recommendation_reason(brief, reason, issue)
+        return brief
 
 
 def issue_brief_from_json(value: str) -> IssueBrief:
@@ -312,8 +326,9 @@ def _format_prompt(issue: GHIssue, reason: str) -> str:
 def _fallback_brief(issue: GHIssue, reason: str) -> IssueBrief:
     body_excerpt = _excerpt(issue.body)
     labels = ", ".join(issue.labels) or "none"
-    problem_summary = reason or issue.reason or (
+    problem_summary = (
         body_excerpt
+        or issue.title.strip()
         or "The issue body is empty; the brief is based on the title and metadata."
     )
     return IssueBrief(
@@ -353,6 +368,12 @@ def _fallback_brief(issue: GHIssue, reason: str) -> IssueBrief:
     )
 
 
+def _hydrate_recommendation_reason(brief: IssueBrief, reason: str, issue: GHIssue) -> None:
+    recommendation_reason = reason or issue.reason or ""
+    if recommendation_reason and not brief.metadata.recommendation_reason:
+        brief.metadata.recommendation_reason = recommendation_reason
+
+
 def _required_str(data: dict[str, Any], key: str, *fallback_keys: str) -> str:
     value = data.get(key)
     if isinstance(value, str) and value.strip():
@@ -379,6 +400,18 @@ def _optional_str_list(data: dict[str, Any], key: str) -> list[str]:
     if not isinstance(value, list):
         raise ValueError(f"Invalid list field: {key}")
     return [str(item).strip() for item in value if isinstance(item, str) and item.strip()]
+
+
+def _parse_profile_value_from_assessment(resource_assessment: str, key: str) -> str:
+    target = key.strip().lower()
+    for chunk in resource_assessment.split(";"):
+        if ":" not in chunk:
+            continue
+        chunk_key, chunk_value = chunk.split(":", 1)
+        if chunk_key.strip().lower() != target:
+            continue
+        return chunk_value.strip().strip(".")
+    return ""
 
 
 def _coerce_scalar_string(value: Any, *, default: str = "") -> str:
