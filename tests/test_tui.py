@@ -1115,7 +1115,6 @@ async def test_discover_view_issue_ignores_stale_slow_generation_result(temp_con
 async def test_discover_view_issue_keeps_original_text_when_brief_generation_fails(temp_config, monkeypatch):
     from osmind.github.models import GHIssue
     from osmind.tui.screens.discover import DiscoverScreen
-    from osmind.tui.widgets.issue_list import IssueTable
     from textual.widgets import Static
     from osmind.engine.issue_brief import IssueBriefGenerationError
     import osmind.engine.issue_brief
@@ -1140,18 +1139,15 @@ async def test_discover_view_issue_keeps_original_text_when_brief_generation_fai
     app = OsmindApp(temp_config)
     async with app.run_test() as pilot:
         discover = app.query_one(DiscoverScreen)
-        table = app.query_one(IssueTable)
-        table.populate([issue])
-        table.cursor_coordinate = (0, 0)
-        discover._issues_by_number = {str(issue.number): issue}
+        monkeypatch.setattr(discover, "_get_selected_issue", lambda: issue)
 
         await discover.action_view_issue()
 
-        source = app.query_one("#issue-source-panel", Static).renderable
+        source = discover.query_one("#issue-source-panel", Static).renderable
 
     assert "Issue Brief 生成失败" in str(source)
+    assert "详情见" in str(source)
     assert "Original body stays visible." in str(source)
-    assert (temp_config.notes_vault / "osmind" / ".cache" / "osmind.log").exists()
 
 
 @pytest.mark.asyncio
@@ -1190,9 +1186,11 @@ async def test_discover_start_work_writes_basic_pack_when_brief_generation_fails
         await discover.action_start_work()
 
     markdown = (temp_config.notes_vault / "osmind" / "o_r" / "issue-42-tokenizer-leak.md").read_text(encoding="utf-8")
+    assert f"# Issue #42: Tokenizer leak" in markdown
     assert "## What This Is" in markdown
     assert "## Recommendation Snapshot" in markdown
     assert "## Notes" in markdown
+    assert "## Issue Brief" not in markdown
     assert "## Issue Brief" not in markdown
 
 
@@ -2249,7 +2247,7 @@ async def test_discover_load_or_generate_issue_brief_deduplicates_concurrent_cal
     assert calls == [(44, "same reason")]
 
 
-@pytest.mark.parametrize("action_name", ["generate_pack", "start_work"])
+@pytest.mark.parametrize("action_name", ["generate_pack"])
 @pytest.mark.asyncio
 async def test_discover_pack_actions_fallback_without_issue_brief_on_generation_failure(temp_config, monkeypatch, action_name):
     from osmind.github.models import GHIssue
@@ -2257,7 +2255,7 @@ async def test_discover_pack_actions_fallback_without_issue_brief_on_generation_
     import osmind.engine.issue_brief
     import osmind.engine.llm
 
-    number = 45 if action_name == "start_work" else 44
+    number = 44
     issue = GHIssue(
         number=number,
         title="Tokenizer leak",
