@@ -36,16 +36,145 @@ class IssueBrief:
     agent_prompt: str
     metadata: IssueBriefMetadata | dict[str, str] | None = None
 
-    def __post_init__(self) -> None:
-        if self.metadata is None:
+    def __init__(
+        self,
+        one_liner: str,
+        problem_summary: str | None = None,
+        background: list[str] | None = None,
+        matched_interests: list[str] | None = None,
+        matched_skills: list[str] | None = None,
+        resource_assessment: str | None = None,
+        evidence: list[str] | None = None,
+        risks: list[str] | None = None,
+        first_steps: list[str] | None = None,
+        validation_path: list[str] | None = None,
+        agent_prompt: str | None = None,
+        metadata: IssueBriefMetadata | dict[str, str] | None = None,
+        *,
+        plain_explanation: str | None = None,
+        why_it_fits: str | None = None,
+        project_context: list[str] | None = None,
+        likely_files: list[str] | None = None,
+        difficulty: str | None = None,
+        readiness: str | None = None,
+        background_to_learn: list[str] | None = None,
+        next_steps: list[str] | None = None,
+        agent_questions: list[str] | None = None,
+    ) -> None:
+        if not isinstance(one_liner, str) or not one_liner.strip():
+            raise ValueError("Missing or invalid string field: one_liner")
+        self.one_liner = one_liner.strip()
+
+        if not isinstance(problem_summary, str) or not problem_summary.strip():
+            if isinstance(plain_explanation, str) and plain_explanation.strip():
+                problem_summary = plain_explanation
+            elif isinstance(why_it_fits, str) and why_it_fits.strip():
+                problem_summary = why_it_fits
+            else:
+                raise ValueError("Missing or invalid string field: problem_summary")
+        self.problem_summary = problem_summary.strip()
+
+        self.background = _coerce_str_list(background)
+        self._project_context = _coerce_str_list(project_context)
+        if not self.background:
+            self.background = self._project_context
+        if not self.background:
+            self.background = _coerce_str_list(background_to_learn)
+
+        self.matched_interests = _coerce_str_list(matched_interests)
+        self.matched_skills = _coerce_str_list(matched_skills)
+
+        if isinstance(resource_assessment, str) and resource_assessment.strip():
+            self.resource_assessment = resource_assessment.strip()
+        else:
+            difficulty_text = _coerce_scalar_string(difficulty) or "unknown"
+            readiness_text = _coerce_scalar_string(readiness) or "needs review"
+            self.resource_assessment = f"Difficulty: {difficulty_text}; Readiness: {readiness_text}."
+
+        self.evidence = _coerce_str_list(evidence)
+        self._likely_files = _coerce_str_list(likely_files)
+        if not self.evidence:
+            self.evidence = self._likely_files
+
+        self.risks = _coerce_str_list(risks)
+
+        self.first_steps = _coerce_str_list(first_steps)
+        self._next_steps = _coerce_str_list(next_steps)
+        if not self.first_steps:
+            self.first_steps = self._next_steps
+
+        self.validation_path = _coerce_str_list(validation_path)
+        self._agent_questions = _coerce_str_list(agent_questions)
+        if not self.validation_path:
+            self.validation_path = self._agent_questions
+
+        self._background_to_learn = _coerce_str_list(background_to_learn) or self._project_context
+
+        if not isinstance(agent_prompt, str) or not agent_prompt.strip():
+            why_text = _coerce_scalar_string(why_it_fits)
+            if why_text:
+                self.agent_prompt = why_text
+            else:
+                self.agent_prompt = f"Investigate issue: {self.one_liner}"
+        else:
+            self.agent_prompt = agent_prompt.strip()
+
+        self._plain_explanation = _coerce_scalar_string(plain_explanation, default="")
+        self._why_it_fits = _coerce_scalar_string(why_it_fits, default="")
+        self._difficulty = _coerce_scalar_string(difficulty, default="unknown")
+        self._readiness = _coerce_scalar_string(readiness, default="needs review")
+        if metadata is None:
             self.metadata = IssueBriefMetadata()
-        elif isinstance(self.metadata, dict):
+        elif isinstance(metadata, dict):
             self.metadata = IssueBriefMetadata(
-                source_updated_at=str(self.metadata.get("source_updated_at", "")),
-                recommendation_reason=str(self.metadata.get("recommendation_reason", "")),
-                profile_hash=str(self.metadata.get("profile_hash", "")),
-                source_hash=str(self.metadata.get("source_hash", "")),
+                source_updated_at=str(metadata.get("source_updated_at", "")),
+                recommendation_reason=str(metadata.get("recommendation_reason", "")),
+                profile_hash=str(metadata.get("profile_hash", "")),
+                source_hash=str(metadata.get("source_hash", "")),
             )
+        elif isinstance(metadata, IssueBriefMetadata):
+            self.metadata = metadata
+        else:
+            raise TypeError("metadata must be an IssueBriefMetadata instance, dict, or None")
+
+        if not self.metadata.recommendation_reason and self._why_it_fits:
+            self.metadata.recommendation_reason = self._why_it_fits
+
+    @property
+    def plain_explanation(self) -> str:
+        return self._plain_explanation or self.problem_summary
+
+    @property
+    def why_it_fits(self) -> str:
+        return self._why_it_fits or self.metadata.recommendation_reason or self.problem_summary
+
+    @property
+    def project_context(self) -> list[str]:
+        return self.background
+
+    @property
+    def likely_files(self) -> list[str]:
+        return self._likely_files if self._likely_files else self.evidence
+
+    @property
+    def difficulty(self) -> str:
+        return self._difficulty
+
+    @property
+    def readiness(self) -> str:
+        return self._readiness
+
+    @property
+    def background_to_learn(self) -> list[str]:
+        return self._background_to_learn
+
+    @property
+    def next_steps(self) -> list[str]:
+        return self._next_steps if self._next_steps else self.first_steps
+
+    @property
+    def agent_questions(self) -> list[str]:
+        return self._agent_questions if self._agent_questions else self.validation_path
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False)
@@ -72,22 +201,40 @@ def issue_brief_from_json(value: str) -> IssueBrief:
         metadata = {}
     return IssueBrief(
         one_liner=_required_str(data, "one_liner"),
-        problem_summary=_required_str(data, "problem_summary"),
-        background=_optional_str_list(data, "background"),
+        problem_summary=_required_str(
+            data,
+            "problem_summary",
+            "plain_explanation",
+            "why_it_fits",
+        ),
+        background=_optional_str_list(data, "background", fallback_key="project_context"),
         matched_interests=_optional_str_list(data, "matched_interests"),
         matched_skills=_optional_str_list(data, "matched_skills"),
-        resource_assessment=_required_str(data, "resource_assessment"),
-        evidence=_optional_str_list(data, "evidence"),
+        resource_assessment=_optional_str(data, "resource_assessment"),
+        evidence=_optional_str_list(data, "evidence", fallback_key="likely_files"),
         risks=_optional_str_list(data, "risks"),
-        first_steps=_optional_str_list(data, "first_steps"),
-        validation_path=_optional_str_list(data, "validation_path"),
-        agent_prompt=_required_str(data, "agent_prompt"),
+        first_steps=_optional_str_list(data, "first_steps", fallback_key="next_steps"),
+        validation_path=_optional_str_list(
+            data,
+            "validation_path",
+            fallback_key="agent_questions",
+        ),
+        agent_prompt=_optional_str(data, "agent_prompt"),
         metadata=IssueBriefMetadata(
             source_updated_at=str(metadata.get("source_updated_at", "")),
             recommendation_reason=str(metadata.get("recommendation_reason", "")),
             profile_hash=str(metadata.get("profile_hash", "")),
             source_hash=str(metadata.get("source_hash", "")),
         ),
+        plain_explanation=_optional_str(data, "plain_explanation"),
+        why_it_fits=_optional_str(data, "why_it_fits") or _optional_str(metadata, "recommendation_reason"),
+        project_context=_optional_str_list(data, "project_context"),
+        likely_files=_optional_str_list(data, "likely_files"),
+        difficulty=_optional_str(data, "difficulty") or "unknown",
+        readiness=_optional_str(data, "readiness") or "needs review",
+        background_to_learn=_optional_str_list(data, "background_to_learn"),
+        next_steps=_optional_str_list(data, "next_steps"),
+        agent_questions=_optional_str_list(data, "agent_questions"),
     )
 
 
@@ -118,6 +265,9 @@ def render_issue_brief_markdown(brief: IssueBrief) -> str:
         "",
         "### First 30 Minutes",
         _render_numbered(brief.first_steps),
+        "",
+        "### Next Steps",
+        _render_list(brief.next_steps),
         "",
         "### Validation Path",
         _render_list(brief.validation_path),
@@ -221,19 +371,57 @@ def _fallback_brief(issue: GHIssue, reason: str) -> IssueBrief:
     )
 
 
-def _required_str(data: dict[str, Any], key: str) -> str:
+def _required_str(data: dict[str, Any], key: str, *fallback_keys: str) -> str:
     value = data.get(key)
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"Missing or invalid string field: {key}")
-    return value
+    if isinstance(value, str) and value.strip():
+        return value
+    for fallback_key in fallback_keys:
+        candidate = data.get(fallback_key)
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate
+    raise ValueError(f"Missing or invalid string field: {key}")
 
 
-def _optional_str_list(data: dict[str, Any], key: str) -> list[str]:
-    value = data.get(key, [])
-    if value is None:
+def _optional_str(data: dict[str, Any], key: str) -> str | None:
+    value = data.get(key)
+    if isinstance(value, str) and value.strip():
+        return value
+    return None
+
+
+def _optional_str_list(
+    data: dict[str, Any],
+    key: str,
+    *,
+    fallback_key: str | None = None,
+) -> list[str]:
+    sentinel = object()
+    value = data.get(key, sentinel)
+    if value is None or value is sentinel:
         return []
     if not isinstance(value, list):
         raise ValueError(f"Invalid list field: {key}")
+    parsed = [str(item).strip() for item in value if isinstance(item, str) and item.strip()]
+    if not parsed and fallback_key is not None:
+        fallback = data.get(fallback_key)
+        if isinstance(fallback, list):
+            return [str(item).strip() for item in fallback if isinstance(item, str) and item.strip()]
+    return parsed
+
+
+def _coerce_scalar_string(value: Any, *, default: str = "") -> str:
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped:
+            return stripped
+    return default
+
+
+def _coerce_str_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        return []
     return [str(item).strip() for item in value if isinstance(item, str) and item.strip()]
 
 
@@ -250,4 +438,3 @@ def _excerpt(value: str, limit: int = 500) -> str:
     if len(cleaned) <= limit:
         return cleaned
     return cleaned[: limit - 3].rstrip() + "..."
-

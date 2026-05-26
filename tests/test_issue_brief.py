@@ -65,6 +65,22 @@ def _brief_payload() -> dict:
     }
 
 
+def _legacy_brief_payload() -> dict:
+    return {
+        "one_liner": "Tokenizer cache grows without bound.",
+        "plain_explanation": "The tokenizer cache keeps growing after repeated requests.",
+        "why_it_fits": "The cached recommendation says this is actionable for Python work.",
+        "project_context": ["Tokenizer code owns request text normalization."],
+        "likely_files": ["python/sglang/tokenizer.py"],
+        "difficulty": "medium",
+        "readiness": "ready",
+        "background_to_learn": ["Read the tokenizer cache implementation."],
+        "next_steps": ["Add a regression test for repeated tokenization."],
+        "agent_questions": ["Which cache key is expected to be bounded?"],
+        "risks": ["The cache may be intentionally process-wide."],
+    }
+
+
 def test_issue_brief_generator_parses_structured_json():
     llm = MagicMock()
     llm.chat.return_value = json.dumps(_brief_payload())
@@ -151,3 +167,35 @@ def test_issue_brief_json_roundtrip():
     parsed = issue_brief_from_json(brief.to_json())
 
     assert parsed == brief
+
+
+def test_issue_brief_supports_legacy_constructor_kwargs():
+    legacy = _legacy_brief_payload()
+    brief = IssueBrief(**legacy)
+
+    assert brief.one_liner == legacy["one_liner"]
+    assert brief.problem_summary == legacy["plain_explanation"]
+    assert brief.background == legacy["project_context"]
+    assert brief.evidence == legacy["likely_files"]
+    assert brief.first_steps == legacy["next_steps"]
+    assert brief.validation_path == legacy["agent_questions"]
+
+    assert brief.plain_explanation == legacy["plain_explanation"]
+    assert brief.why_it_fits == legacy["why_it_fits"]
+    assert brief.project_context == legacy["project_context"]
+    assert brief.likely_files == legacy["likely_files"]
+    assert brief.difficulty == legacy["difficulty"]
+    assert brief.readiness == legacy["readiness"]
+    assert brief.background_to_learn == legacy["background_to_learn"]
+    assert brief.next_steps == legacy["next_steps"]
+    assert brief.agent_questions == legacy["agent_questions"]
+
+
+def test_issue_brief_roundtrip_preserves_legacy_why_it_fits():
+    legacy = _legacy_brief_payload()
+    brief = IssueBrief(**legacy)
+
+    parsed = issue_brief_from_json(brief.to_json())
+
+    assert parsed.why_it_fits == legacy["why_it_fits"]
+    assert parsed.why_it_fits == parsed.metadata.recommendation_reason
