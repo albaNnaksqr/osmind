@@ -315,8 +315,7 @@ def is_issue_brief_current(
     expected = issue_brief_metadata(issue, reason, profile_context)
     metadata = brief.metadata if isinstance(brief.metadata, IssueBriefMetadata) else IssueBriefMetadata()
     return (
-        metadata.source_updated_at == expected.source_updated_at
-        and metadata.recommendation_reason == expected.recommendation_reason
+        metadata.recommendation_reason == expected.recommendation_reason
         and metadata.profile_hash == expected.profile_hash
         and metadata.source_hash == expected.source_hash
     )

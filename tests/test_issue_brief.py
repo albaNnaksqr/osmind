@@ -243,6 +243,7 @@ def test_issue_brief_cache_metadata_ignores_sixth_comment_body_change():
         "fifth comment",
         "sixth comment",
     )
+    issue.updated_at = "2026-05-15T01:02:03+00:00"
     profile_context = IssueBriefProfileContext(
         interests=["SGLang inference optimization"],
         skills=["Python"],
@@ -259,6 +260,7 @@ def test_issue_brief_cache_metadata_ignores_sixth_comment_body_change():
         "fifth comment",
         "sixth comment changed outside prompt window",
     )
+    changed_issue.updated_at = "2026-05-16T01:02:03+00:00"
 
     assert is_issue_brief_current(brief, changed_issue, "Recommended by ranker", profile_context)
 
@@ -272,6 +274,7 @@ def test_issue_brief_cache_metadata_detects_first_five_comment_body_change():
         "fifth comment",
         "sixth comment",
     )
+    issue.updated_at = "2026-05-15T01:02:03+00:00"
     profile_context = IssueBriefProfileContext(
         interests=["SGLang inference optimization"],
         skills=["Python"],
@@ -288,12 +291,14 @@ def test_issue_brief_cache_metadata_detects_first_five_comment_body_change():
         "fifth comment",
         "sixth comment",
     )
+    changed_issue.updated_at = "2026-05-16T01:02:03+00:00"
 
     assert not is_issue_brief_current(brief, changed_issue, "Recommended by ranker", profile_context)
 
 
 def test_issue_brief_cache_metadata_detects_issue_body_change():
     issue = _issue_with_comments("first comment")
+    issue.updated_at = "2026-05-15T01:02:03+00:00"
     profile_context = IssueBriefProfileContext(
         interests=["SGLang inference optimization"],
         skills=["Python"],
@@ -303,6 +308,7 @@ def test_issue_brief_cache_metadata_detects_issue_body_change():
     brief.metadata = issue_brief_metadata(issue, "Recommended by ranker", profile_context)
 
     changed_issue = _issue_with_comments("first comment")
+    changed_issue.updated_at = "2026-05-16T01:02:03+00:00"
     changed_issue.body = "Need to add Qwen3MoE model support with a new tokenizer path."
 
     assert not is_issue_brief_current(brief, changed_issue, "Recommended by ranker", profile_context)
