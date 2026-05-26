@@ -1112,6 +1112,91 @@ async def test_discover_view_issue_ignores_stale_slow_generation_result(temp_con
 
 
 @pytest.mark.asyncio
+async def test_discover_view_issue_keeps_original_text_when_brief_generation_fails(temp_config, monkeypatch):
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    from osmind.tui.widgets.issue_list import IssueTable
+    from textual.widgets import Static
+    from osmind.engine.issue_brief import IssueBriefGenerationError
+    import osmind.engine.issue_brief
+    import osmind.engine.llm
+
+    issue = GHIssue(42, "Tokenizer leak", "Original body stays visible.", ["bug"], "u", "o/r", "open")
+
+    class DummyLLMClient:
+        def __init__(self, cfg):
+            pass
+
+    class FailingIssueBriefGenerator:
+        def __init__(self, llm):
+            pass
+
+        def generate(self, issue, reason="", profile_context=None):
+            raise IssueBriefGenerationError("Failed to parse issue brief JSON")
+
+    monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
+    monkeypatch.setattr(osmind.engine.issue_brief, "IssueBriefGenerator", FailingIssueBriefGenerator)
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        table = app.query_one(IssueTable)
+        table.populate([issue])
+        table.cursor_coordinate = (0, 0)
+        discover._issues_by_number = {str(issue.number): issue}
+
+        await discover.action_view_issue()
+
+        source = app.query_one("#issue-source-panel", Static).renderable
+
+    assert "Issue Brief 生成失败" in str(source)
+    assert "Original body stays visible." in str(source)
+    assert (temp_config.notes_vault / "osmind" / ".cache" / "osmind.log").exists()
+
+
+@pytest.mark.asyncio
+async def test_discover_start_work_writes_basic_pack_when_brief_generation_fails(temp_config, monkeypatch):
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    from osmind.tui.widgets.issue_list import IssueTable
+    from osmind.engine.issue_brief import IssueBriefGenerationError
+    import osmind.engine.issue_brief
+    import osmind.engine.llm
+
+    issue = GHIssue(42, "Tokenizer leak", "Body", ["bug"], "u", "o/r", "open")
+
+    class DummyLLMClient:
+        def __init__(self, cfg):
+            pass
+
+    class FailingIssueBriefGenerator:
+        def __init__(self, llm):
+            pass
+
+        def generate(self, issue, reason="", profile_context=None):
+            raise IssueBriefGenerationError("Failed to parse issue brief JSON")
+
+    monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
+    monkeypatch.setattr(osmind.engine.issue_brief, "IssueBriefGenerator", FailingIssueBriefGenerator)
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        table = app.query_one(IssueTable)
+        table.populate([issue])
+        table.cursor_coordinate = (0, 0)
+        discover._issues_by_number = {str(issue.number): issue}
+
+        await discover.action_start_work()
+
+    markdown = (temp_config.notes_vault / "osmind" / "o_r" / "issue-42-tokenizer-leak.md").read_text(encoding="utf-8")
+    assert "## What This Is" in markdown
+    assert "## Recommendation Snapshot" in markdown
+    assert "## Notes" in markdown
+    assert "## Issue Brief" not in markdown
+
+
+@pytest.mark.asyncio
 async def test_discover_detail_tab_toggles_analysis_and_source_focus(temp_config, monkeypatch):
     from osmind.github.models import GHIssue
     from osmind.tui.screens.discover import DiscoverScreen
