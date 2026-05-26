@@ -52,15 +52,13 @@ class PacksScreen(Vertical):
 
     def on_mount(self) -> None:
         table = self.query_one("#packs-table", DataTable)
-        table.add_columns(
-            ("Type", "type"),
-            ("#", "number"),
-            ("Repo", "repo"),
-            ("Status", "status"),
-            ("Decision", "decision"),
-            ("Confidence", "confidence"),
-            ("Path", "path"),
-        )
+        table.add_column("Type", key="type")
+        table.add_column("#", key="number")
+        table.add_column("Repo", key="repo")
+        table.add_column("Status", key="status")
+        table.add_column("Decision", key="decision")
+        table.add_column("Confidence", key="confidence")
+        table.add_column("Path", key="path")
         self._packs_by_key: dict[str, dict] = {}
         section_table = self.query_one("#packet-section-table", DataTable)
         section_table.add_columns("Section")
@@ -195,7 +193,10 @@ class PacksScreen(Vertical):
         self.action_view_pack()
 
     def _show_packet_section(self, index: int) -> None:
-        self.query_one("#packet-markdown", Markdown).update(packet_section_markdown(self._reader_markdown, index))
+        markdown = packet_section_markdown(self._reader_markdown, index)
+        viewer = self.query_one("#packet-markdown", Markdown)
+        viewer.source = markdown
+        viewer.update(markdown)
 
     def _write_pack_decision(self, pack: dict, decision: str) -> Path:
         return self._library().set_pack_decision(

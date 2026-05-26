@@ -105,7 +105,11 @@ class OsmindApp(App):
             self.call_after_refresh(lambda pane_id=event.pane.id: self._activate_tab_if_current(pane_id))
 
     def _activate_tab_if_current(self, tab: str) -> None:
-        if self.query_one(TabbedContent).active != tab:
+        try:
+            tabs = self.query_one(TabbedContent)
+        except NoMatches:
+            return
+        if tabs.active != tab:
             return
         self._activate_tab(tab)
 

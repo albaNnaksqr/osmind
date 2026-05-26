@@ -498,7 +498,7 @@ async def test_discover_action_filter_cycles_visible_recommendations(temp_config
 
         assert table.row_count == 1
         assert table.get_row_at(0)[0] == "Do now"
-        assert "Filter: Do now" in str(app.query_one("#freshness-status", Static).content)
+        assert "Filter: Do now" in str(app.query_one("#freshness-status", Static).renderable)
 
 
 @pytest.mark.asyncio
@@ -526,7 +526,7 @@ async def test_discover_active_queue_hides_user_deferred_and_discarded_items(tem
 
         assert table.row_count == 1
         assert table.get_row_at(0)[2] == "1"
-        status = str(app.query_one("#freshness-status", Static).content)
+        status = str(app.query_one("#freshness-status", Static).renderable)
         assert "Filter: Active" in status
         assert "Deferred: 1" in status
         assert "Discarded: 1" in status
@@ -578,7 +578,7 @@ async def test_discover_active_queue_resurfaces_deferred_item_when_source_update
 
         assert table.row_count == 1
         assert table.get_row_at(0)[2] == "42"
-        assert "Changed: 1" in str(app.query_one("#freshness-status", Static).content)
+        assert "Changed: 1" in str(app.query_one("#freshness-status", Static).renderable)
 
 
 @pytest.mark.asyncio
@@ -612,7 +612,7 @@ async def test_discover_active_queue_resurfaces_deferred_item_when_resources_cha
 
         assert table.row_count == 1
         assert table.get_row_at(0)[2] == "42"
-        assert "Changed: 1" in str(app.query_one("#freshness-status", Static).content)
+        assert "Changed: 1" in str(app.query_one("#freshness-status", Static).renderable)
 
 
 @pytest.mark.asyncio
@@ -632,7 +632,7 @@ async def test_discover_freshness_status_shows_cached_fetch_and_rank_times(temp_
         discover = app.query_one(DiscoverScreen)
         await discover.action_fetch()
 
-        status = str(app.query_one("#freshness-status", Static).content)
+        status = str(app.query_one("#freshness-status", Static).renderable)
 
     assert "1 issues" in status
     assert "Last fetched:" in status
@@ -782,8 +782,8 @@ async def test_discover_view_issue_separates_analysis_from_source(temp_config, m
 
         await discover.action_view_issue()
 
-        analysis = app.query_one("#issue-analysis-panel", Static).content
-        source = app.query_one("#issue-source-panel", Static).content
+        analysis = app.query_one("#issue-analysis-panel", Static).renderable
+        source = app.query_one("#issue-source-panel", Static).renderable
 
     assert "Recommendation" in str(analysis)
     assert "Decision Factors" in str(analysis)
@@ -858,7 +858,7 @@ async def test_discover_view_issue_uses_cached_issue_brief_without_llm(temp_conf
 
         await discover.action_view_issue()
 
-        source = app.query_one("#issue-source-panel", Static).content
+        source = app.query_one("#issue-source-panel", Static).renderable
 
     assert "Cached tokenizer brief." in str(source)
     assert "Use cached next step." in str(source)
@@ -927,7 +927,7 @@ async def test_discover_view_issue_regenerates_cached_brief_when_reason_changes(
 
         await discover.action_view_issue()
 
-        source = app.query_one("#issue-source-panel", Static).content
+        source = app.query_one("#issue-source-panel", Static).renderable
 
     assert calls == [(42, "new recommendation reason")]
     assert "Fresh tokenizer brief." in str(source)
@@ -988,7 +988,7 @@ async def test_discover_view_issue_ignores_stale_slow_generation_result(temp_con
         release_slow.set()
         await first_task
 
-        source = app.query_one("#issue-source-panel", Static).content
+        source = app.query_one("#issue-source-panel", Static).renderable
 
     assert "Issue #2: Second issue" in str(source)
     assert "Fast second brief." in str(source)
@@ -1400,7 +1400,7 @@ async def test_packs_start_work_shows_selected_packet_plan(temp_config):
         assert app.query_one("#packs-list-view").display is False
         assert app.query_one("#pack-start-work-view").display is True
 
-    content = str(panel.content)
+    content = str(panel.renderable)
     markdown = (temp_config.notes_vault / "osmind" / "o_r" / "pr-3-workable-pack.md").read_text(encoding="utf-8")
     assert "Start Work" in content
     assert "Decision: continue" in content
@@ -2006,7 +2006,7 @@ async def test_discover_start_work_generates_packet_and_shows_plan(temp_config, 
         assert app.query_one("#issue-list-view").display is False
         assert app.query_one("#start-work-view").display is True
 
-    content = str(panel.content)
+    content = str(panel.renderable)
     markdown = (temp_config.notes_vault / "osmind" / "o_r" / "issue-43-tokenizer-leak.md").read_text(encoding="utf-8")
     assert "Start Work" in content
     assert "Decision: continue" in content
@@ -2321,7 +2321,7 @@ async def test_packs_screen_uses_contribution_packet_language(temp_config):
 
     app = OsmindApp(temp_config)
     async with app.run_test() as pilot:
-        labels = [str(label.content) for label in app.query(Label)]
+        labels = [str(label.renderable) for label in app.query(Label)]
         table = app.query_one("#packs-table", DataTable)
 
     assert any("Contribution Packets" in label for label in labels)
@@ -2381,7 +2381,7 @@ async def test_review_screen_uses_contribution_packet_language(temp_config):
 
     app = OsmindApp(temp_config)
     async with app.run_test() as pilot:
-        labels = [str(label.content) for label in app.query(Label)]
+        labels = [str(label.renderable) for label in app.query(Label)]
 
     assert any("Contribution Packets" in label for label in labels)
 
@@ -2398,7 +2398,7 @@ async def test_settings_screen_reports_runtime_health(temp_config):
         settings = app.query_one(SettingsScreen)
         settings.action_reload()
 
-        content = str(app.query_one("#settings-health", Static).content)
+        content = str(app.query_one("#settings-health", Static).renderable)
 
     assert "GitHub token" in content
     assert "LLM" in content

@@ -34,8 +34,8 @@ class DiscoverScreen(Vertical):
     DiscoverScreen #toolbar { height: 3; }
     DiscoverScreen #repo-select { width: 32; height: 3; }
     DiscoverScreen #action-filter { width: 18; height: 3; }
-    DiscoverScreen #hint { width: 1fr; height: 3; content-align: left middle; }
-    DiscoverScreen #freshness-status { height: 2; padding: 0 1; }
+    DiscoverScreen #hint { width: 52; height: 3; content-align: left middle; }
+    DiscoverScreen #freshness-status { width: 1fr; height: 3; content-align: left middle; padding: 0 1; }
     DiscoverScreen #loader { display: none; height: 3; }
     DiscoverScreen #issue-list-view { height: 1fr; }
     DiscoverScreen #issue-detail-view { display: none; height: 1fr; }
@@ -87,7 +87,7 @@ class DiscoverScreen(Vertical):
             yield Select(options, id="repo-select", value=initial)
             yield Select(self.ACTION_FILTERS, id="action-filter", value="active")
             yield Label("  u: Load/update opportunities  a: Filter  Enter: Details  w: Start Work", id="hint")
-        yield Static("Filter: Active | No opportunities loaded", id="freshness-status")
+            yield Static("Filter: Active | No opportunities loaded", id="freshness-status")
         yield LoadingIndicator(id="loader")
         with Vertical(id="issue-list-view"):
             yield IssueTable(id="issue-table")
