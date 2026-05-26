@@ -251,27 +251,47 @@ def test_write_issue_pack_can_include_issue_brief(tmp_path):
     notes_vault = tmp_path / "notes"
     cache_path = tmp_path / "cache" / "osmind.db"
     brief = IssueBrief(
-        one_liner="Tokenizer cache grows without bound.",
-        plain_explanation="The tokenizer retains entries for long sequences.",
-        why_it_fits="It matches the current memory profiling focus.",
-        project_context=["Tokenizer cache owns sequence memoization."],
+        one_liner="tokenizer cache 泄漏 issue",
+        plain_explanation="Tokenizer cache may grow due to missing eviction paths.",
+        why_it_fits="Matches recent investigation targets.",
+        project_context=["Tokenizer cache path: src/tokenizer/cache.py."],
         likely_files=["src/tokenizer/cache.py"],
         difficulty="medium",
         readiness="ready",
-        background_to_learn=["Read the tokenizer cache implementation."],
-        next_steps=["Add a failing memory regression test."],
-        agent_questions=["Which cache key keeps growing?"],
-        risks=["Memory behavior may depend on input shape."],
+        background_to_learn=["模型推理路径和 tokenizer cache 初始化。"],
+        next_steps=["阅读并搜索 tokenizer cache 相关实现", "先执行复现脚本"],
+        agent_questions=["复现测试先失败", "如何复现该问题"],
+        risks=["Interest: SGLang", "Skill: Python", "Issue 可能缺少完整复现脚本"],
+        agent_prompt="请在 o/r 中分析 tokenizer cache 泄漏 issue",
+    )
+    issue = GHIssue(
+        number=7,
+        title="tokenizer cache 泄漏 issue",
+        body="Memory grows on long prompt batches.",
+        labels=["bug", "tokenizer"],
+        url="https://github.com/o/r/issues/7",
+        repo="o/r",
+        state="open",
+        reason="Interest: SGLang\nSkill: Python",
     )
     library = PackLibrary(notes_vault, cache_path)
 
-    path = library.write_issue_pack(_issue(), brief=brief)
+    path = library.write_issue_pack(issue, brief=brief)
 
     markdown = path.read_text(encoding="utf-8")
     assert "## Recommendation Snapshot" in markdown
     assert "## Issue Brief" in markdown
-    assert "### One-Liner" in markdown
-    assert "Tokenizer cache grows without bound." in markdown
+    assert "## Why It May Fit You" in markdown
+    assert "Interest: SGLang" in markdown
+    assert "Skill: Python" in markdown
+    assert "## Risks And Missing Evidence" in markdown
+    assert "Issue 可能缺少完整复现脚本" in markdown
+    assert "## First 30 Minutes" in markdown
+    assert "搜索 tokenizer cache" in markdown
+    assert "## Validation Path" in markdown
+    assert "复现测试先失败" in markdown
+    assert "## Agent Prompt" in markdown
+    assert "请在 o/r 中分析 tokenizer cache 泄漏 issue" in markdown
     assert markdown.index("## Recommendation Snapshot") < markdown.index("## Issue Brief")
     assert markdown.index("## Issue Brief") < markdown.index("## Why It May Fit You")
     assert markdown.count("## Issue Brief") == 1

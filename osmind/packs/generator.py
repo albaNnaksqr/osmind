@@ -1,7 +1,18 @@
 from __future__ import annotations
 
 from osmind.decision import format_decision_markdown
-from osmind.engine.issue_brief import IssueBrief, render_issue_brief_markdown
+from osmind.engine.issue_brief import IssueBrief
+from osmind.engine import issue_brief as issue_brief_module
+
+try:
+    from osmind.engine.issue_brief import render_agent_prompt
+except ImportError:
+    render_agent_prompt = getattr(issue_brief_module, "render_agent_prompt", None)
+
+    if render_agent_prompt is None:
+        def render_agent_prompt(issue: GHIssue, brief: IssueBrief) -> str:  # type: ignore[no-redef]
+            return f"请在 {issue.repo} 中分析 {brief.one_liner} issue"
+
 from osmind.github.models import GHIssue, GHPR, PRFile
 from osmind.packs.models import LearningPack, PackSection, SourceRef
 
@@ -69,21 +80,39 @@ class PackGenerator:
         sections = [
             PackSection("What This Is", _issue_what_this_is(issue)),
             PackSection("Recommendation Snapshot", format_decision_markdown(issue, resources)),
-            PackSection("Why It May Fit You", _why_issue_may_fit(issue)),
-            PackSection("Continue Or Stop Criteria", _issue_continue_stop_criteria(issue)),
-            PackSection("First 10 Minutes", _issue_first_ten_minutes(issue)),
-            PackSection("Files And Symbols To Inspect", _issue_search_targets(issue)),
-            PackSection("Validation Path", _issue_validation_path(issue)),
-            PackSection("Known Facts", _issue_known_context(issue)),
-            PackSection("Missing Context", _issue_missing_context(issue)),
-            PackSection("Reproduction Hypothesis", _issue_reproduction_hypothesis(issue)),
-            PackSection("Maintainer Signals", _issue_maintainer_signals(issue)),
-            PackSection("Agent Exploration Prompt", _issue_agent_prompt(issue)),
-            PackSection("Decision Log", _decision_log()),
-            PackSection("Notes", ""),
         ]
         if brief is not None:
-            sections.insert(2, PackSection("Issue Brief", _issue_brief_body(brief)))
+            sections.extend(
+                [
+                    PackSection("Issue Brief", _issue_brief_summary(brief)),
+                    PackSection("Why It May Fit You", _brief_why_it_may_fit(brief, issue)),
+                    PackSection("Risks And Missing Evidence", _issue_brief_risks(brief)),
+                    PackSection("First 30 Minutes", _numbered_list(brief.next_steps)),
+                    PackSection("Validation Path", _numbered_list(brief.agent_questions)),
+                    PackSection("Agent Prompt", _issue_brief_agent_prompt(issue, brief)),
+                ]
+            )
+        else:
+            sections.extend(
+                [
+                    PackSection("Why It May Fit You", _why_issue_may_fit(issue)),
+                    PackSection("First 10 Minutes", _issue_first_ten_minutes(issue)),
+                    PackSection("Validation Path", _issue_validation_path(issue)),
+                    PackSection("Agent Exploration Prompt", _issue_agent_prompt(issue)),
+                ]
+            )
+        sections.extend(
+            [
+                PackSection("Continue Or Stop Criteria", _issue_continue_stop_criteria(issue)),
+                PackSection("Files And Symbols To Inspect", _issue_search_targets(issue)),
+                PackSection("Known Facts", _issue_known_context(issue)),
+                PackSection("Missing Context", _issue_missing_context(issue)),
+                PackSection("Reproduction Hypothesis", _issue_reproduction_hypothesis(issue)),
+                PackSection("Maintainer Signals", _issue_maintainer_signals(issue)),
+                PackSection("Decision Log", _decision_log()),
+                PackSection("Notes", ""),
+            ]
+        )
         return LearningPack(source=source, modules=[], sections=sections)
 
 
@@ -98,14 +127,127 @@ def _modules_from_files(files: list[PRFile]) -> list[str]:
     return modules
 
 
-def _issue_brief_body(brief: IssueBrief) -> str:
-    markdown = render_issue_brief_markdown(brief).strip()
-    lines = markdown.splitlines()
-    if lines and lines[0].strip() == "## Issue Brief":
-        lines = lines[1:]
-        if lines and not lines[0].strip():
-            lines = lines[1:]
-    return "\n".join(lines)
+def _plain_list(items: list[str]) -> str:
+    if not items:
+        return "- None identified."
+    return "\n".join(f"- {item}" for item in items)
+
+
+def _numbered_list(items: list[str]) -> str:
+    if not items:
+        return "1. None identified."
+    return "\n".join(f"{index}. {item}" for index, item in enumerate(items, 1))
+
+
+def _extract_fact_lines(value: str, key: str) -> list[str]:
+    lowered_key = key.lower()
+    lines = []
+    for line in value.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        lower = line.lower()
+        if lower.startswith(f"{lowered_key}:") or lower.startswith(f"{lowered_key}："):
+            lines.append(line)
+    return lines
+
+
+def _tagged_items(items: list[str], label: str) -> list[str]:
+    if not items:
+        return []
+    normalized: list[str] = []
+    for item in items:
+        stripped = item.strip()
+        if not stripped:
+            continue
+        if stripped.lower().startswith(label.lower() + ":"):
+            normalized.append(stripped)
+        elif stripped.lower().startswith("interest") or stripped.lower().startswith("skill"):
+            normalized.append(stripped)
+        else:
+            normalized.append(f"{label}: {stripped}")
+    return normalized
+
+
+def _brief_ranker_reason(issue: GHIssue) -> str:
+    if not issue.reason:
+        return ""
+    return "\n\n### Ranker Reason\n" + "\n".join(["- " + issue.reason.strip()])
+
+
+def _issue_brief_summary(brief: IssueBrief) -> str:
+    background = _plain_list(brief.project_context + brief.background_to_learn)
+    return "\n".join(
+        [
+            "### One-Liner",
+            brief.one_liner,
+            "",
+            "### Problem Summary",
+            brief.plain_explanation,
+            "",
+            "### Background",
+            background,
+        ]
+    )
+
+
+def _brief_why_it_may_fit(brief: IssueBrief, issue: GHIssue) -> str:
+    interests = brief.matched_interests or _extract_fact_lines(issue.reason, "Interest")
+    if not interests:
+        interests = ["Interest: unknown"]
+
+    skills = brief.matched_skills or _extract_fact_lines(issue.reason, "Skill")
+    if not skills:
+        skills = ["Skill: unknown"]
+
+    return "\n".join(
+        [
+            "### Matched Interests",
+            _plain_list(_tagged_items(interests, "Interest")),
+            "",
+            "### Matched Skills",
+            _plain_list(_tagged_items(skills, "Skill")),
+            "",
+            "### Resource Assessment",
+            f"- {brief.resource_assessment}",
+            f"- Fit: {issue.fit or 'unknown'}",
+            f"- Actionability: {issue.actionability or 'unknown'}",
+            f"- Priority: {issue.priority or 'unknown'}",
+            "",
+            "### Evidence",
+            _plain_list(_tagged_evidence(issue, brief)),
+        ]
+    ) + _brief_ranker_reason(issue)
+
+
+def _tagged_evidence(issue: GHIssue, brief: IssueBrief) -> list[str]:
+    evidence = list(brief.evidence)
+    if not evidence and issue.body:
+        evidence.append(issue.body.strip()[:240] or "No issue body captured.")
+    if issue.labels:
+        evidence.append(f"Labels: {', '.join(issue.labels)}")
+    return evidence or ["No explicit evidence provided."]
+
+
+def _issue_brief_risks(brief: IssueBrief) -> str:
+    return "\n".join(
+        [
+            "### Risks",
+            _plain_list(brief.risks),
+            "",
+            "### Missing Evidence",
+            _plain_list(brief.risks),
+        ]
+    )
+
+
+def _issue_brief_agent_prompt(issue: GHIssue, brief: IssueBrief) -> str:
+    if render_agent_prompt is None:
+        return f"请在 {issue.repo} 中分析 {issue.title} issue"
+    try:
+        return render_agent_prompt(brief)
+    except TypeError:
+        return render_agent_prompt(issue, brief)
 
 
 def _file_summary(file: PRFile) -> str:
