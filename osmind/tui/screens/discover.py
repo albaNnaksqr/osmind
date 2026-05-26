@@ -2,6 +2,7 @@ from __future__ import annotations
 import asyncio
 import os
 from pathlib import Path
+import webbrowser
 from textual.app import ComposeResult
 from textual.widgets import Label, LoadingIndicator, Select, Static
 from textual.containers import Vertical, Horizontal
@@ -34,8 +35,8 @@ class DiscoverScreen(Vertical):
     DiscoverScreen #toolbar { height: 3; }
     DiscoverScreen #repo-select { width: 32; height: 3; }
     DiscoverScreen #action-filter { width: 18; height: 3; }
-    DiscoverScreen #hint { width: 1fr; height: 3; content-align: left middle; }
-    DiscoverScreen #freshness-status { height: 2; padding: 0 1; }
+    DiscoverScreen #hint { width: 52; height: 3; content-align: left middle; }
+    DiscoverScreen #freshness-status { width: 1fr; height: 3; content-align: left middle; padding: 0 1; }
     DiscoverScreen #loader { display: none; height: 3; }
     DiscoverScreen #issue-list-view { height: 1fr; }
     DiscoverScreen #issue-detail-view { display: none; height: 1fr; }
@@ -70,6 +71,7 @@ class DiscoverScreen(Vertical):
         ("space", "decide", "Decide"),
         ("w", "start_work", "Start Work"),
         ("o", "open_pack", "Open Packet"),
+        ("g", "open_github", "GitHub"),
     ]
 
     def __init__(self):
@@ -86,12 +88,12 @@ class DiscoverScreen(Vertical):
         with Horizontal(id="toolbar"):
             yield Select(options, id="repo-select", value=initial)
             yield Select(self.ACTION_FILTERS, id="action-filter", value="active")
-            yield Label("  u: Load/update opportunities  a: Filter  Enter: Details  w: Start Work", id="hint")
-        yield Static("Filter: Active | No opportunities loaded", id="freshness-status")
+            yield Label("  u: Load/update  a: Filter  Enter: Details  g: GitHub  w: Start Work", id="hint")
+            yield Static("Filter: Active | No opportunities loaded", id="freshness-status")
         yield LoadingIndicator(id="loader")
         with Vertical(id="issue-list-view"):
             yield IssueTable(id="issue-table")
-            yield Static("[dim]选中 issue 后按 Enter 查看推荐动作、资源解释和原文。[/dim]", id="issue-summary-panel")
+            yield Static(_empty_state_checklist(self.app.config), id="issue-summary-panel")
         with Vertical(id="issue-detail-view"):
             yield Static(
                 "[dim]Tab 切换 Analysis/Source。Esc/q 返回列表。Space 决策。w Start Work。o 打开 Packet。[/dim]",
@@ -442,7 +444,7 @@ class DiscoverScreen(Vertical):
 
             hint = self.query_one("#hint", Label)
             hint.update(
-                "  ↑↓ navigate  Enter: Details  Space: Decide  w: Start Work  o: Open  u: Load/Update"
+                "  ↑↓ navigate  Enter: Details  g: GitHub  Space: Decide  w: Start Work  o: Open  u: Load/Update"
             )
             self.query_one("#loader", LoadingIndicator).display = False
             if failures:
@@ -488,7 +490,6 @@ class DiscoverScreen(Vertical):
         try:
             from osmind.engine.issue_brief import (
                 IssueBriefGenerator,
-                issue_brief_from_json,
                 render_issue_brief_markdown,
             )
             from osmind.engine.llm import LLMClient
@@ -497,15 +498,14 @@ class DiscoverScreen(Vertical):
 
             def _load_or_generate_brief_markdown():
                 cache = self._cache()
-                cached_json = cache.get_issue_brief(issue.repo, issue.number)
-                brief = None
-                if cached_json:
-                    brief = issue_brief_from_json(cached_json)
-                    if issue.reason and brief.why_it_fits != issue.reason:
-                        brief = None
+                brief = self._cached_issue_brief(issue)
                 if brief is None:
                     llm = LLMClient(llm_cfg)
-                    brief = IssueBriefGenerator(llm).generate(issue, reason=issue.reason)
+                    brief = IssueBriefGenerator(llm).generate(
+                        issue,
+                        reason=issue.reason,
+                        profile_context=self._issue_brief_profile_context(),
+                    )
                     cache.update_issue_brief(issue.repo, issue.number, brief.to_json())
                 return render_issue_brief_markdown(brief)
 
@@ -546,7 +546,7 @@ class DiscoverScreen(Vertical):
         self.query_one("#issue-analysis-panel", Static).can_focus = True
         self.query_one("#issue-source-panel", Static).can_focus = True
         self.query_one("#hint", Label).update(
-            "  Tab: Analysis/Source  Esc/q: Back  Space: Decide  w: Start Work  o: Open"
+            "  Tab: Analysis/Source  Esc/q: Back  g: GitHub  Space: Decide  w: Start Work  o: Open"
         )
 
     def _show_list(self) -> None:
@@ -600,18 +600,32 @@ class DiscoverScreen(Vertical):
         return None
 
     def _cached_issue_brief(self, issue):
-        from osmind.engine.issue_brief import issue_brief_from_json
+        from osmind.engine.issue_brief import is_issue_brief_current, issue_brief_from_json
 
         cached_json = self._cache().get_issue_brief(issue.repo, issue.number)
         if not cached_json:
             return None
         try:
             brief = issue_brief_from_json(cached_json)
+            if not is_issue_brief_current(
+                brief,
+                issue,
+                issue.reason,
+                self._issue_brief_profile_context(),
+            ):
+                return None
         except Exception:
             return None
-        if issue.reason and brief.why_it_fits != issue.reason:
-            return None
         return brief
+
+    def _issue_brief_profile_context(self):
+        from osmind.engine.issue_brief import IssueBriefProfileContext
+
+        return IssueBriefProfileContext(
+            interests=list(self.app.config.interests),
+            skills=list(self.app.config.skills),
+            resources=dict(self.app.config.resources or {}),
+        )
 
     async def action_start_work(self) -> None:
         issue = self._get_selected_issue()
@@ -705,6 +719,21 @@ class DiscoverScreen(Vertical):
             )
             self.notify(f"{e} (log: {log_path})", severity="error")
 
+    def action_open_github(self) -> None:
+        issue = self._get_selected_issue()
+        if not issue:
+            self.notify("先选中一个 issue", severity="warning")
+            return
+        try:
+            with suspend_if_supported(self.app):
+                open_url(issue.url)
+        except Exception as e:
+            log_path = log_exception(
+                self.app.config.notes_vault,
+                f"Failed to open GitHub issue for {issue.repo}#{issue.number}",
+            )
+            self.notify(f"{e} (log: {log_path})", severity="error")
+
     async def action_decide(self) -> None:
         issue = self._get_selected_issue()
         if not issue:
@@ -779,6 +808,25 @@ class DiscoverScreen(Vertical):
 
     async def key_x(self) -> None:
         await self.action_launch_codex()
+
+
+def open_url(url: str) -> None:
+    webbrowser.open(url)
+
+
+def _empty_state_checklist(config) -> str:
+    repo = config.watching[0]["repo"] if getattr(config, "watching", None) else "not selected"
+    token_status = "OK" if os.environ.get("GITHUB_TOKEN") else "Missing"
+    llm_status = "Configured" if config.llm.base_url and config.llm.model else "Missing"
+    output_dir = getattr(config, "output_dir", config.notes_vault)
+    return (
+        "[bold]Next checklist[/bold]\n"
+        f"- repo: {repo}\n"
+        f"- GitHub token: {token_status}\n"
+        f"- LLM: {llm_status} ({config.llm.model})\n"
+        f"- output: {output_dir}\n"
+        "- Press u to load cached opportunities or fetch from GitHub."
+    )
 
 
 def _format_issue_analysis(issue, resources: dict | None = None) -> str:

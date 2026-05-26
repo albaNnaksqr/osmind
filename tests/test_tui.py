@@ -8,17 +8,17 @@ from pathlib import Path
 
 def _issue_brief_payload(**overrides):
     payload = {
-        "one_liner": "Tokenizer cache grows without bounds.",
-        "plain_explanation": "The tokenizer cache keeps growing after repeated requests.",
-        "why_it_fits": "The cached recommendation says this is actionable for Python work.",
-        "project_context": ["Tokenizer code owns request text normalization."],
-        "likely_files": ["python/sglang/tokenizer.py"],
-        "difficulty": "medium",
-        "readiness": "ready",
-        "background_to_learn": ["Read the tokenizer cache implementation."],
-        "next_steps": ["Add a regression test for repeated tokenization."],
-        "agent_questions": ["Which cache key is expected to be bounded?"],
-        "risks": ["The cache may be intentionally process-wide."],
+        "one_liner": "这是 tokenizer cache 泄漏问题，适合先补复现测试。",
+        "problem_summary": "Issue 描述 tokenizer cache 会持续增长，需要定位缓存释放或 key 策略。",
+        "background": ["Tokenizer cache 可能影响长序列请求的内存占用。"],
+        "matched_interests": ["SGLang"],
+        "matched_skills": ["Python"],
+        "resource_assessment": "可以先用小输入和单测验证，不需要大 GPU。",
+        "evidence": ["Label bug.", "Body mentions cache keeps growing."],
+        "risks": ["Issue 可能缺少完整复现脚本。"],
+        "first_steps": ["搜索 tokenizer cache。", "补一个最小内存增长复现。"],
+        "validation_path": ["复现测试先失败。", "修复后缓存数量不再随长序列无限增长。"],
+        "agent_prompt": "请在 o/r 中分析 tokenizer cache 泄漏 issue，先找缓存实现和最小复现测试。",
     }
     payload.update(overrides)
     return payload
@@ -201,10 +201,65 @@ def test_packs_reader_reuses_enter_without_extra_view_keys():
     assert {"y", "l", "n", "u"}.isdisjoint(bound_keys)
 
 
+def test_discover_includes_github_open_shortcut():
+    from osmind.tui.screens.discover import DiscoverScreen
+
+    binding_actions = {binding[1] for binding in DiscoverScreen.BINDINGS}
+
+    assert "open_github" in binding_actions
+
+
 def test_plain_q_is_not_global_quit_shortcut():
     from osmind.tui.app import OsmindApp
 
     assert ("q", "quit", "Quit") not in OsmindApp.BINDINGS
+
+
+@pytest.mark.asyncio
+async def test_discover_empty_state_shows_setup_checklist(temp_config):
+    from textual.widgets import Static
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        summary = app.query_one("#issue-summary-panel", Static)
+        content = str(summary.renderable)
+
+    assert "Next" in content
+    assert "repo" in content
+    assert "GitHub token" in content
+    assert "LLM" in content
+    assert "u" in content
+
+
+@pytest.mark.asyncio
+async def test_discover_open_github_opens_selected_issue_url(temp_config, monkeypatch):
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    from osmind.tui.widgets.issue_list import IssueTable
+
+    issue = GHIssue(
+        42,
+        "Tokenizer leak",
+        "Body",
+        [],
+        "https://github.com/o/r/issues/42",
+        "o/r",
+        "open",
+    )
+    opened = []
+    monkeypatch.setattr("osmind.tui.screens.discover.open_url", lambda url: opened.append(url))
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        table = app.query_one(IssueTable)
+        table.populate([issue])
+        table.cursor_coordinate = (0, 0)
+        discover._issues_by_number = {str(issue.number): issue}
+
+        discover.action_open_github()
+
+    assert opened == [issue.url]
 
 
 @pytest.mark.asyncio
@@ -498,7 +553,7 @@ async def test_discover_action_filter_cycles_visible_recommendations(temp_config
 
         assert table.row_count == 1
         assert table.get_row_at(0)[0] == "Do now"
-        assert "Filter: Do now" in str(app.query_one("#freshness-status", Static).content)
+        assert "Filter: Do now" in str(app.query_one("#freshness-status", Static).renderable)
 
 
 @pytest.mark.asyncio
@@ -526,7 +581,7 @@ async def test_discover_active_queue_hides_user_deferred_and_discarded_items(tem
 
         assert table.row_count == 1
         assert table.get_row_at(0)[2] == "1"
-        status = str(app.query_one("#freshness-status", Static).content)
+        status = str(app.query_one("#freshness-status", Static).renderable)
         assert "Filter: Active" in status
         assert "Deferred: 1" in status
         assert "Discarded: 1" in status
@@ -578,7 +633,7 @@ async def test_discover_active_queue_resurfaces_deferred_item_when_source_update
 
         assert table.row_count == 1
         assert table.get_row_at(0)[2] == "42"
-        assert "Changed: 1" in str(app.query_one("#freshness-status", Static).content)
+        assert "Changed: 1" in str(app.query_one("#freshness-status", Static).renderable)
 
 
 @pytest.mark.asyncio
@@ -612,7 +667,7 @@ async def test_discover_active_queue_resurfaces_deferred_item_when_resources_cha
 
         assert table.row_count == 1
         assert table.get_row_at(0)[2] == "42"
-        assert "Changed: 1" in str(app.query_one("#freshness-status", Static).content)
+        assert "Changed: 1" in str(app.query_one("#freshness-status", Static).renderable)
 
 
 @pytest.mark.asyncio
@@ -632,7 +687,7 @@ async def test_discover_freshness_status_shows_cached_fetch_and_rank_times(temp_
         discover = app.query_one(DiscoverScreen)
         await discover.action_fetch()
 
-        status = str(app.query_one("#freshness-status", Static).content)
+        status = str(app.query_one("#freshness-status", Static).renderable)
 
     assert "1 issues" in status
     assert "Last fetched:" in status
@@ -761,11 +816,11 @@ async def test_discover_view_issue_separates_analysis_from_source(temp_config, m
         def __init__(self, llm):
             pass
 
-        def generate(self, issue, reason=""):
+        def generate(self, issue, reason="", profile_context=None):
             return IssueBrief(
                 **_issue_brief_payload(
                     one_liner="这是 tokenizer cache 泄漏问题，适合先补复现测试。",
-                    next_steps=["先补复现测试。"],
+                    first_steps=["先补复现测试。"],
                 )
             )
 
@@ -782,8 +837,8 @@ async def test_discover_view_issue_separates_analysis_from_source(temp_config, m
 
         await discover.action_view_issue()
 
-        analysis = app.query_one("#issue-analysis-panel", Static).content
-        source = app.query_one("#issue-source-panel", Static).content
+        analysis = app.query_one("#issue-analysis-panel", Static).renderable
+        source = app.query_one("#issue-source-panel", Static).renderable
 
     assert "Recommendation" in str(analysis)
     assert "Decision Factors" in str(analysis)
@@ -796,7 +851,13 @@ async def test_discover_view_issue_separates_analysis_from_source(temp_config, m
     assert "Issue Brief" in str(source)
     assert str(source).count("Issue Brief") == 1
     assert "One-Liner" in str(source)
-    assert "Next Steps" in str(source)
+    assert "Problem Summary" in str(source)
+    assert "Why It May Fit You" in str(source)
+    assert "Risks And Missing Evidence" in str(source)
+    assert "First 30 Minutes" in str(source)
+    assert "Validation Path" in str(source)
+    assert "Agent Prompt" in str(source)
+    assert "请在 o/r 中分析 tokenizer cache 泄漏 issue" in str(source)
     assert "这是 tokenizer cache 泄漏问题" in str(source)
     assert "Original Issue" in str(source)
     assert "The tokenizer cache keeps growing." in str(source)
@@ -829,8 +890,8 @@ async def test_discover_view_issue_uses_cached_issue_brief_without_llm(temp_conf
     cached_brief = IssueBrief(
         **_issue_brief_payload(
             one_liner="Cached tokenizer brief.",
-            why_it_fits="cached issue reason",
-            next_steps=["Use cached next step."],
+            problem_summary="cached issue reason",
+            first_steps=["Use cached first step."],
         )
     )
     cache = CacheStore(temp_config.notes_vault / "osmind" / ".cache" / "osmind.db")
@@ -858,10 +919,10 @@ async def test_discover_view_issue_uses_cached_issue_brief_without_llm(temp_conf
 
         await discover.action_view_issue()
 
-        source = app.query_one("#issue-source-panel", Static).content
+        source = app.query_one("#issue-source-panel", Static).renderable
 
     assert "Cached tokenizer brief." in str(source)
-    assert "Use cached next step." in str(source)
+    assert "Use cached first step." in str(source)
     assert "Original body stays visible." in str(source)
 
 
@@ -889,7 +950,7 @@ async def test_discover_view_issue_regenerates_cached_brief_when_reason_changes(
     stale_brief = IssueBrief(
         **_issue_brief_payload(
             one_liner="Old cached tokenizer brief.",
-            why_it_fits="old recommendation reason",
+            problem_summary="old recommendation reason",
         )
     )
     cache = CacheStore(temp_config.notes_vault / "osmind" / ".cache" / "osmind.db")
@@ -905,12 +966,12 @@ async def test_discover_view_issue_regenerates_cached_brief_when_reason_changes(
         def __init__(self, llm):
             pass
 
-        def generate(self, issue, reason=""):
+        def generate(self, issue, reason="", profile_context=None):
             calls.append((issue.number, reason))
             return IssueBrief(
                 **_issue_brief_payload(
                     one_liner="Fresh tokenizer brief.",
-                    why_it_fits=reason,
+                    problem_summary=reason,
                 )
             )
 
@@ -927,13 +988,87 @@ async def test_discover_view_issue_regenerates_cached_brief_when_reason_changes(
 
         await discover.action_view_issue()
 
-        source = app.query_one("#issue-source-panel", Static).content
+        source = app.query_one("#issue-source-panel", Static).renderable
 
     assert calls == [(42, "new recommendation reason")]
     assert "Fresh tokenizer brief." in str(source)
     assert "new recommendation reason" in str(source)
     assert "old recommendation reason" not in str(source)
     assert "new recommendation reason" in cache.get_issue_brief(issue.repo, issue.number)
+
+
+@pytest.mark.asyncio
+async def test_discover_view_issue_regenerates_cached_brief_when_profile_context_changes(temp_config, monkeypatch):
+    from osmind.cache.store import CacheStore
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    from osmind.tui.widgets.issue_list import IssueTable
+    from textual.widgets import Static
+    from osmind.engine.issue_brief import IssueBrief
+    import osmind.engine.issue_brief
+    import osmind.engine.llm
+
+    issue = GHIssue(
+        42,
+        "Tokenizer leak",
+        "Original body stays visible.",
+        ["bug"],
+        "https://github.com/o/r/issues/42",
+        "o/r",
+        "open",
+        reason="profile-sensitive recommendation reason",
+    )
+    stale_brief = IssueBrief(
+        **_issue_brief_payload(
+            one_liner="Old cached tokenizer brief.",
+            problem_summary="profile-sensitive recommendation reason",
+            matched_interests=["Other"],
+            matched_skills=["Python"],
+            resource_assessment="none",
+            agent_prompt="旧上下文简略。",
+        )
+    )
+    cache = CacheStore(temp_config.notes_vault / "osmind" / ".cache" / "osmind.db")
+    cache.upsert_issue(issue)
+    cache.update_issue_brief(issue.repo, issue.number, stale_brief.to_json())
+    calls = []
+
+    class DummyLLMClient:
+        def __init__(self, cfg):
+            pass
+
+    class RecordingIssueBriefGenerator:
+        def __init__(self, llm):
+            pass
+
+        def generate(self, issue, reason="", profile_context=None):
+            calls.append((issue.number, reason, list(profile_context.interests)))
+            return IssueBrief(
+                **_issue_brief_payload(
+                    one_liner="Fresh tokenizer brief.",
+                    problem_summary=reason,
+                )
+            )
+
+    monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
+    monkeypatch.setattr(osmind.engine.issue_brief, "IssueBriefGenerator", RecordingIssueBriefGenerator)
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        table = app.query_one(IssueTable)
+        table.populate([issue])
+        table.cursor_coordinate = (0, 0)
+        discover._issues_by_number = {str(issue.number): issue}
+
+        await discover.action_view_issue()
+
+        source = app.query_one("#issue-source-panel", Static).renderable
+
+    assert calls == [(42, "profile-sensitive recommendation reason", ["SGLang"])]
+    assert "Fresh tokenizer brief." in str(source)
+    assert "Old cached tokenizer brief." not in str(source)
+    assert "profile-sensitive recommendation reason" in str(source)
 
 
 @pytest.mark.asyncio
@@ -961,12 +1096,12 @@ async def test_discover_view_issue_ignores_stale_slow_generation_result(temp_con
         def __init__(self, llm):
             pass
 
-        def generate(self, issue, reason=""):
+        def generate(self, issue, reason="", profile_context=None):
             if issue.number == 1:
                 slow_started.set()
                 release_slow.wait(timeout=2)
-                return IssueBrief(**_issue_brief_payload(one_liner="Slow first brief.", why_it_fits=reason))
-            return IssueBrief(**_issue_brief_payload(one_liner="Fast second brief.", why_it_fits=reason))
+                return IssueBrief(**_issue_brief_payload(one_liner="Slow first brief.", problem_summary=reason))
+            return IssueBrief(**_issue_brief_payload(one_liner="Fast second brief.", problem_summary=reason))
 
     monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
     monkeypatch.setattr(osmind.engine.issue_brief, "IssueBriefGenerator", OrderedIssueBriefGenerator)
@@ -988,7 +1123,7 @@ async def test_discover_view_issue_ignores_stale_slow_generation_result(temp_con
         release_slow.set()
         await first_task
 
-        source = app.query_one("#issue-source-panel", Static).content
+        source = app.query_one("#issue-source-panel", Static).renderable
 
     assert "Issue #2: Second issue" in str(source)
     assert "Fast second brief." in str(source)
@@ -1015,8 +1150,8 @@ async def test_discover_detail_tab_toggles_analysis_and_source_focus(temp_config
         def __init__(self, llm):
             pass
 
-        def generate(self, issue, reason=""):
-            return IssueBrief(**_issue_brief_payload(one_liner="摘要"))
+        def generate(self, issue, reason="", profile_context=None):
+            return IssueBrief(**_issue_brief_payload(one_liner="摘要", problem_summary="摘要"))
 
     monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
     monkeypatch.setattr(osmind.engine.issue_brief, "IssueBriefGenerator", DummyIssueBriefGenerator)
@@ -1062,8 +1197,8 @@ async def test_discover_enter_key_opens_issue_detail_from_focused_table(temp_con
         def __init__(self, llm):
             pass
 
-        def generate(self, issue, reason=""):
-            return IssueBrief(**_issue_brief_payload(one_liner="摘要"))
+        def generate(self, issue, reason="", profile_context=None):
+            return IssueBrief(**_issue_brief_payload(one_liner="摘要", problem_summary="摘要"))
 
     monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
     monkeypatch.setattr(osmind.engine.issue_brief, "IssueBriefGenerator", DummyIssueBriefGenerator)
@@ -1108,8 +1243,8 @@ async def test_discover_issue_detail_is_a_separate_view_and_escape_returns_to_li
         def __init__(self, llm):
             pass
 
-        def generate(self, issue, reason=""):
-            return IssueBrief(**_issue_brief_payload(one_liner="摘要"))
+        def generate(self, issue, reason="", profile_context=None):
+            return IssueBrief(**_issue_brief_payload(one_liner="摘要", problem_summary="摘要"))
 
     monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
     monkeypatch.setattr(osmind.engine.issue_brief, "IssueBriefGenerator", DummyIssueBriefGenerator)
@@ -1153,8 +1288,8 @@ async def test_discover_q_returns_from_issue_detail_without_quitting(temp_config
         def __init__(self, llm):
             pass
 
-        def generate(self, issue, reason=""):
-            return IssueBrief(**_issue_brief_payload(one_liner="摘要"))
+        def generate(self, issue, reason="", profile_context=None):
+            return IssueBrief(**_issue_brief_payload(one_liner="摘要", problem_summary="摘要"))
 
     monkeypatch.setattr(osmind.engine.llm, "LLMClient", DummyLLMClient)
     monkeypatch.setattr(osmind.engine.issue_brief, "IssueBriefGenerator", DummyIssueBriefGenerator)
@@ -1400,7 +1535,7 @@ async def test_packs_start_work_shows_selected_packet_plan(temp_config):
         assert app.query_one("#packs-list-view").display is False
         assert app.query_one("#pack-start-work-view").display is True
 
-    content = str(panel.content)
+    content = str(panel.renderable)
     markdown = (temp_config.notes_vault / "osmind" / "o_r" / "pr-3-workable-pack.md").read_text(encoding="utf-8")
     assert "Start Work" in content
     assert "Decision: continue" in content
@@ -1952,8 +2087,8 @@ async def test_discover_generate_pack_includes_cached_issue_brief(temp_config, m
     brief = IssueBrief(
         **_issue_brief_payload(
             one_liner="Cached packet brief.",
-            why_it_fits="cached fit reason",
-            next_steps=["Carry this brief into the packet."],
+            problem_summary="cached fit reason",
+            first_steps=["Carry this brief into the packet."],
         )
     )
     cache = CacheStore(temp_config.notes_vault / "osmind" / ".cache" / "osmind.db")
@@ -2006,7 +2141,7 @@ async def test_discover_start_work_generates_packet_and_shows_plan(temp_config, 
         assert app.query_one("#issue-list-view").display is False
         assert app.query_one("#start-work-view").display is True
 
-    content = str(panel.content)
+    content = str(panel.renderable)
     markdown = (temp_config.notes_vault / "osmind" / "o_r" / "issue-43-tokenizer-leak.md").read_text(encoding="utf-8")
     assert "Start Work" in content
     assert "Decision: continue" in content
@@ -2033,7 +2168,7 @@ def test_discover_bindings_keep_only_core_opportunity_actions():
     assert keys_by_action["decide"] == "space"
     assert keys_by_action["view_issue"] == "enter"
     assert ("v", "view_issue", "View Issue") in DiscoverScreen.BINDINGS
-    assert {"f", "s", "g", "y", "l", "n"}.isdisjoint(bound_keys)
+    assert {"f", "s", "y", "l", "n"}.isdisjoint(bound_keys)
     assert "r" not in {binding[0] for binding in DiscoverScreen.BINDINGS}
 
 
@@ -2321,7 +2456,7 @@ async def test_packs_screen_uses_contribution_packet_language(temp_config):
 
     app = OsmindApp(temp_config)
     async with app.run_test() as pilot:
-        labels = [str(label.content) for label in app.query(Label)]
+        labels = [str(label.renderable) for label in app.query(Label)]
         table = app.query_one("#packs-table", DataTable)
 
     assert any("Contribution Packets" in label for label in labels)
@@ -2381,7 +2516,7 @@ async def test_review_screen_uses_contribution_packet_language(temp_config):
 
     app = OsmindApp(temp_config)
     async with app.run_test() as pilot:
-        labels = [str(label.content) for label in app.query(Label)]
+        labels = [str(label.renderable) for label in app.query(Label)]
 
     assert any("Contribution Packets" in label for label in labels)
 
@@ -2398,11 +2533,11 @@ async def test_settings_screen_reports_runtime_health(temp_config):
         settings = app.query_one(SettingsScreen)
         settings.action_reload()
 
-        content = str(app.query_one("#settings-health", Static).content)
+        content = str(app.query_one("#settings-health", Static).renderable)
 
     assert "GitHub token" in content
     assert "LLM" in content
-    assert "Notes vault" in content
+    assert "Output dir" in content
     assert "Resources" in content
     assert "4x RTX 4090" in content
 
