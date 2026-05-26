@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from osmind.engine.llm import LLMClient
@@ -19,6 +19,7 @@ class IssueBriefMetadata:
     recommendation_reason: str = ""
     profile_hash: str = ""
     source_hash: str = ""
+    legacy_background_to_learn: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -108,8 +109,6 @@ class IssueBrief:
         if not self.validation_path:
             self.validation_path = self._agent_questions
 
-        self._background_to_learn = _coerce_str_list(background_to_learn) or self._project_context
-
         if not isinstance(agent_prompt, str) or not agent_prompt.strip():
             why_text = _coerce_scalar_string(why_it_fits)
             if why_text:
@@ -126,16 +125,30 @@ class IssueBrief:
         if metadata is None:
             self.metadata = IssueBriefMetadata()
         elif isinstance(metadata, dict):
+            legacy_background_to_learn = _coerce_str_list(
+                metadata.get("legacy_background_to_learn", [])
+            )
             self.metadata = IssueBriefMetadata(
                 source_updated_at=str(metadata.get("source_updated_at", "")),
                 recommendation_reason=str(metadata.get("recommendation_reason", "")),
                 profile_hash=str(metadata.get("profile_hash", "")),
                 source_hash=str(metadata.get("source_hash", "")),
+                legacy_background_to_learn=legacy_background_to_learn,
             )
         elif isinstance(metadata, IssueBriefMetadata):
             self.metadata = metadata
         else:
             raise TypeError("metadata must be an IssueBriefMetadata instance, dict, or None")
+
+        self._background_to_learn = _coerce_str_list(background_to_learn)
+        if not self._background_to_learn:
+            self._background_to_learn = self._project_context
+        if not self._background_to_learn:
+            self._background_to_learn = _coerce_str_list(
+                self.metadata.legacy_background_to_learn
+            )
+        if background_to_learn is not None:
+            self.metadata.legacy_background_to_learn = list(self._background_to_learn)
 
         if not self.metadata.recommendation_reason and self._why_it_fits:
             self.metadata.recommendation_reason = self._why_it_fits
@@ -233,6 +246,9 @@ def issue_brief_from_json(value: str) -> IssueBrief:
             recommendation_reason=str(metadata.get("recommendation_reason", "")),
             profile_hash=str(metadata.get("profile_hash", "")),
             source_hash=str(metadata.get("source_hash", "")),
+            legacy_background_to_learn=_coerce_str_list(
+                metadata.get("legacy_background_to_learn", [])
+            ),
         ),
     )
 

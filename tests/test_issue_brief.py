@@ -227,6 +227,19 @@ def test_issue_brief_roundtrip_preserves_legacy_compatibility_read_properties():
     assert parsed.background_to_learn == legacy["project_context"]
 
 
+def test_issue_brief_roundtrip_preserves_legacy_background_to_learn():
+    brief = IssueBrief(
+        one_liner="Tokenizer cache grows without bound.",
+        plain_explanation="The tokenizer cache grows.",
+        project_context=["ctx"],
+        background_to_learn=["learn me"],
+    )
+
+    parsed = issue_brief_from_json(brief.to_json())
+
+    assert parsed.background_to_learn == ["learn me"]
+
+
 def test_issue_brief_from_json_requires_resource_assessment_for_canonical_payload():
     payload = _brief_payload()
     del payload["resource_assessment"]
