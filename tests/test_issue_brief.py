@@ -4,9 +4,13 @@ from unittest.mock import MagicMock
 
 from osmind.engine.issue_brief import (
     IssueBrief,
+    IssueBriefGenerationError,
     IssueBriefGenerator,
+    IssueBriefProfileContext,
+    is_issue_brief_current,
     render_agent_prompt,
     issue_brief_from_json,
+    issue_brief_metadata,
     render_issue_brief_markdown,
 )
 from osmind.github.models import GHIssue
@@ -86,10 +90,20 @@ def test_issue_brief_generator_parses_structured_json():
     llm = MagicMock()
     llm.chat.return_value = json.dumps(_brief_payload())
     issue = _issue()
+    expected_metadata = issue_brief_metadata(
+        issue,
+        "Recommended by ranker",
+        IssueBriefProfileContext(interests=[], skills=[], resources={}),
+    )
 
-    brief = IssueBriefGenerator(llm).generate(issue, reason="Recommended by ranker")
+    brief = IssueBriefGenerator(llm).generate(
+        issue,
+        reason="Recommended by ranker",
+    )
+    expected = IssueBrief(**_brief_payload())
+    expected.metadata = expected_metadata
 
-    assert brief == IssueBrief(**_brief_payload())
+    assert brief == expected
     llm.chat.assert_called_once()
     system, prompt = llm.chat.call_args.args
     assert "Only return valid JSON" in system
@@ -98,22 +112,63 @@ def test_issue_brief_generator_parses_structured_json():
     assert "Labels: good first issue, model" in prompt
     assert "Recommendation reason: Recommended by ranker" in prompt
     assert "one_liner" in prompt
-    assert llm.chat.call_args.kwargs["max_tokens"] == 1024
+    assert llm.chat.call_args.kwargs["max_tokens"] == 1400
 
 
-def test_issue_brief_generator_falls_back_when_llm_returns_invalid_json():
+def test_issue_brief_generator_raises_controlled_error_for_invalid_json():
     llm = MagicMock()
     llm.chat.return_value = "not json"
     issue = _issue()
+    profile_context = IssueBriefProfileContext(
+        interests=["SGLang inference optimization"],
+        skills=["Python"],
+        resources={"gpus": "4x RTX 4090"},
+    )
 
-    brief = IssueBriefGenerator(llm).generate(issue, reason="Good first issue with clear adapter template.")
+    with pytest.raises(IssueBriefGenerationError, match="Failed to parse issue brief JSON"):
+        IssueBriefGenerator(llm).generate(
+            issue,
+            reason="Good first issue with clear adapter template.",
+            profile_context=profile_context,
+        )
 
-    assert brief.one_liner == "Add Qwen3MoE support"
-    assert "Need to add Qwen3MoE model support." in brief.problem_summary
-    assert brief.background == ["Repo: o/r", "Labels: good first issue, model", "Issue URL: https://github.com/o/r/issues/42"]
-    assert brief.first_steps[0] == "Read the issue body and linked discussion."
-    assert brief.matched_interests == []
-    assert brief.risks
+
+def test_issue_brief_cache_metadata_marks_current_brief_valid():
+    issue = _issue()
+    profile_context = IssueBriefProfileContext(
+        interests=["SGLang inference optimization"],
+        skills=["Python"],
+        resources={"gpus": "4x RTX 4090"},
+    )
+    brief = IssueBrief(**_brief_payload())
+    brief.metadata = issue_brief_metadata(issue, "Recommended by ranker", profile_context)
+
+    assert is_issue_brief_current(brief, issue, "Recommended by ranker", profile_context)
+
+
+def test_issue_brief_cache_metadata_detects_changed_reason():
+    issue = _issue()
+    profile_context = IssueBriefProfileContext(
+        interests=["SGLang inference optimization"],
+        skills=["Python"],
+        resources={"gpus": "4x RTX 4090"},
+    )
+    brief = IssueBrief(**_brief_payload())
+    brief.metadata = issue_brief_metadata(issue, "Recommended by ranker", profile_context)
+
+    assert not is_issue_brief_current(brief, issue, "Different reason", profile_context)
+
+
+def test_issue_brief_generator_normalizes_blank_optional_list_items():
+    llm = MagicMock()
+    payload = _brief_payload()
+    payload["first_steps"] = ["搜索 Qwen2 adapter", "  "]
+    llm.chat.return_value = json.dumps(payload)
+    issue = _issue()
+
+    brief = IssueBriefGenerator(llm).generate(issue, reason="Clear fit.")
+
+    assert brief.first_steps == ["搜索 Qwen2 adapter"]
 
 
 def test_issue_brief_generator_sets_missing_recommendation_reason():
@@ -128,18 +183,13 @@ def test_issue_brief_generator_sets_missing_recommendation_reason():
     assert brief.metadata.recommendation_reason == "Clear model-adaptation fit."
 
 
-def test_issue_brief_generator_falls_back_when_list_fields_are_blank():
-    llm = MagicMock()
+def test_issue_brief_parser_normalizes_blank_optional_list_items():
     payload = _brief_payload()
-    payload["first_steps"] = ["  "]
-    llm.chat.return_value = json.dumps(payload)
-    issue = _issue()
+    payload["first_steps"] = ["搜索 Qwen2 adapter", "  "]
 
-    brief = IssueBriefGenerator(llm).generate(issue, reason="Clear fit.")
+    brief = issue_brief_from_json(json.dumps(payload))
 
-    assert brief.one_liner == "这是一个模型适配问题，可以先沿着 Qwen2 adapter 找入口。"
-    assert brief.first_steps == []
-    assert "Issue 要求为 Qwen3MoE 增加模型支持" in brief.problem_summary
+    assert brief.first_steps == ["搜索 Qwen2 adapter"]
 
 
 def test_issue_brief_renders_markdown_sections():

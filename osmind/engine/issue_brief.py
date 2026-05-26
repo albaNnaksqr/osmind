@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -20,6 +21,26 @@ class IssueBriefMetadata:
     profile_hash: str = ""
     source_hash: str = ""
     legacy_background_to_learn: list[str] = field(default_factory=list)
+
+
+class IssueBriefGenerationError(Exception):
+    pass
+
+
+@dataclass
+class IssueBriefProfileContext:
+    interests: list[str]
+    skills: list[str]
+    resources: dict[str, Any]
+
+    def to_prompt(self) -> str:
+        return "\n".join(
+            [
+                f"Interests: {', '.join(self.interests) or 'none'}",
+                f"Skills: {', '.join(self.skills) or 'none'}",
+                f"Resources: {_format_mapping(self.resources)}",
+            ]
+        )
 
 
 @dataclass
@@ -209,13 +230,27 @@ class IssueBriefGenerator:
     def __init__(self, llm: LLMClient):
         self._llm = llm
 
-    def generate(self, issue: GHIssue, reason: str = "") -> IssueBrief:
-        raw = self._llm.chat(_SYSTEM, _format_prompt(issue, reason), max_tokens=1024)
+    def generate(
+        self,
+        issue: GHIssue,
+        reason: str = "",
+        profile_context: IssueBriefProfileContext | None = None,
+    ) -> IssueBrief:
+        profile_context = profile_context or IssueBriefProfileContext(
+            interests=[],
+            skills=[],
+            resources={},
+        )
+        raw = self._llm.chat(
+            _SYSTEM,
+            _format_prompt(issue, reason, profile_context),
+            max_tokens=1400,
+        )
         try:
             brief = issue_brief_from_json(raw)
-        except (json.JSONDecodeError, TypeError, ValueError):
-            brief = _fallback_brief(issue, reason)
-        _hydrate_recommendation_reason(brief, reason, issue)
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            raise IssueBriefGenerationError("Failed to parse issue brief JSON") from exc
+        brief.metadata = issue_brief_metadata(issue, reason, profile_context)
         return brief
 
 
@@ -250,6 +285,56 @@ def issue_brief_from_json(value: str) -> IssueBrief:
                 metadata.get("legacy_background_to_learn", [])
             ),
         ),
+    )
+
+
+def issue_brief_metadata(
+    issue: GHIssue,
+    reason: str,
+    profile_context: IssueBriefProfileContext,
+) -> IssueBriefMetadata:
+    return IssueBriefMetadata(
+        source_updated_at=issue.updated_at or "",
+        recommendation_reason=reason or issue.reason or "",
+        profile_hash=_hash_json(
+            {
+                "interests": profile_context.interests,
+                "skills": profile_context.skills,
+                "resources": profile_context.resources,
+            }
+        ),
+        source_hash=_hash_json(
+            {
+                "title": issue.title,
+                "body": issue.body,
+                "labels": issue.labels,
+                "comments": [
+                    {
+                        "author": comment.author,
+                        "body": comment.body,
+                        "created_at": comment.created_at,
+                        "url": comment.url,
+                    }
+                    for comment in issue.comments
+                ],
+            }
+        ),
+    )
+
+
+def is_issue_brief_current(
+    brief: IssueBrief,
+    issue: GHIssue,
+    reason: str,
+    profile_context: IssueBriefProfileContext,
+) -> bool:
+    expected = issue_brief_metadata(issue, reason, profile_context)
+    metadata = brief.metadata if isinstance(brief.metadata, IssueBriefMetadata) else IssueBriefMetadata()
+    return (
+        metadata.source_updated_at == expected.source_updated_at
+        and metadata.recommendation_reason == expected.recommendation_reason
+        and metadata.profile_hash == expected.profile_hash
+        and metadata.source_hash == expected.source_hash
     )
 
 
@@ -307,87 +392,45 @@ def _render_numbered(items: list[str]) -> str:
     return "\n".join(f"{index}. {item}" for index, item in enumerate(items, 1))
 
 
-def _format_prompt(issue: GHIssue, reason: str) -> str:
+def _format_prompt(
+    issue: GHIssue, reason: str, profile_context: IssueBriefProfileContext
+) -> str:
     labels = ", ".join(issue.labels) or "none"
     recommendation_reason = reason or issue.reason or "(none)"
+    comments = "\n".join(
+        f"- {comment.author}: {comment.body[:800]}" for comment in issue.comments[:5]
+    ) or "- No cached comments."
     expected_fields = "\n".join(
         [
-            '- "one_liner": string',
-            '- "problem_summary": string',
-            '- "background": array of strings',
-            '- "matched_interests": array of strings',
-            '- "matched_skills": array of strings',
-            '- "resource_assessment": string',
-            '- "evidence": array of strings',
-            '- "risks": array of strings',
-            '- "first_steps": array of strings',
-            '- "validation_path": array of strings',
-            '- "agent_prompt": string',
-            '- "metadata": object with optional keys',
+            '- "one_liner": string, Chinese',
+            '- "problem_summary": string, Chinese',
+            '- "background": array of strings, Chinese',
+            '- "matched_interests": array of strings copied from user profile when supported by evidence',
+            '- "matched_skills": array of strings copied from user profile when supported by evidence',
+            '- "resource_assessment": string, Chinese',
+            '- "evidence": array of strings grounded in title, labels, body, comments, score reason, or profile',
+            '- "risks": array of strings, Chinese',
+            '- "first_steps": array of strings, Chinese, first 30 minutes',
+            '- "validation_path": array of strings, Chinese',
+            '- "agent_prompt": string, Chinese, ready to give to Codex or Claude',
         ]
     )
     return (
+        "Answer in Chinese. Return strict JSON only; no markdown fence.\n"
+        "Ground every recommendation in the issue text, comments, score reason, or user profile. "
+        "If evidence is missing, say so in risks instead of inventing repository internals.\n\n"
         f"Repo: {issue.repo}\n"
         f"Issue #{issue.number}: {issue.title}\n"
         f"URL: {issue.url}\n"
         f"Labels: {labels}\n"
         f"Recommendation reason: {recommendation_reason}\n\n"
+        f"User profile:\n{profile_context.to_prompt()}\n\n"
         f"Issue body:\n{issue.body[:4000] or '(empty)'}\n\n"
+        f"Comments:\n{comments}\n\n"
         "Return a JSON object with these expected fields:\n"
         f"{expected_fields}\n\n"
         "Keep the brief concrete, useful to an implementation agent, and grounded in the issue text."
     )
-
-
-def _fallback_brief(issue: GHIssue, reason: str) -> IssueBrief:
-    body_excerpt = _excerpt(issue.body)
-    labels = ", ".join(issue.labels) or "none"
-    problem_summary = (
-        body_excerpt
-        or issue.title.strip()
-        or "The issue body is empty; the brief is based on the title and metadata."
-    )
-    return IssueBrief(
-        one_liner=issue.title.strip() or f"Issue #{issue.number}",
-        problem_summary=problem_summary,
-        background=[
-            f"Repo: {issue.repo}",
-            f"Labels: {labels}",
-            f"Issue URL: {issue.url}",
-        ],
-        matched_interests=[],
-        matched_skills=[],
-        resource_assessment="Not enough context to assess risk; inspect source files first.",
-        evidence=[
-            f"Title: {issue.title}",
-            f"Body excerpt: {body_excerpt or '(empty)'}",
-        ],
-        risks=[
-            "The LLM did not return a valid structured brief.",
-            "The fallback may miss project-specific files or hidden constraints.",
-        ],
-        first_steps=[
-            "Read the issue body and linked discussion.",
-            "Search the repository for symbols from the title and body.",
-            "Identify the smallest reproducible change before editing.",
-        ],
-        validation_path=[
-            "Confirm which files own the issue behavior.",
-            "Find an existing test or add one covering the intended behavior.",
-            "Run focused checks and record the results.",
-        ],
-        agent_prompt=(
-            f"In {issue.repo}, investigate issue #{issue.number}: {issue.title}. "
-            "Inspect related code paths, summarize concrete changes and validation checks, "
-            "then confirm whether the repository context is sufficient for implementation."
-        ),
-    )
-
-
-def _hydrate_recommendation_reason(brief: IssueBrief, reason: str, issue: GHIssue) -> None:
-    recommendation_reason = reason or issue.reason or ""
-    if recommendation_reason and not brief.metadata.recommendation_reason:
-        brief.metadata.recommendation_reason = recommendation_reason
 
 
 def _required_str(data: dict[str, Any], key: str, *fallback_keys: str) -> str:
@@ -446,16 +489,20 @@ def _coerce_str_list(value: Any) -> list[str]:
     return [str(item).strip() for item in value if isinstance(item, str) and item.strip()]
 
 
+def _format_mapping(values: dict[str, Any]) -> str:
+    if not values:
+        return "none"
+    return ", ".join(f"{key}: {value}" for key, value in values.items())
+
+
+def _hash_json(value: dict[str, Any]) -> str:
+    payload = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def _render_list(items: list[str], *, code: bool = False) -> str:
     if not items:
         return "- None identified."
     if code:
         return "\n".join(f"- `{item}`" for item in items)
     return "\n".join(f"- {item}" for item in items)
-
-
-def _excerpt(value: str, limit: int = 500) -> str:
-    cleaned = " ".join(value.split())
-    if len(cleaned) <= limit:
-        return cleaned
-    return cleaned[: limit - 3].rstrip() + "..."
