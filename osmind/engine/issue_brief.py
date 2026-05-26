@@ -199,64 +199,27 @@ def issue_brief_from_json(value: str) -> IssueBrief:
     metadata = data.get("metadata") or {}
     if not isinstance(metadata, dict):
         metadata = {}
-    is_legacy_payload = any(
-        key in data
-        for key in (
-            "plain_explanation",
-            "why_it_fits",
-            "project_context",
-            "likely_files",
-            "difficulty",
-            "readiness",
-            "background_to_learn",
-            "next_steps",
-            "agent_questions",
-        )
-    )
-    problem_summary = _required_str(
-        data,
-        "problem_summary",
-        *(
-            ("plain_explanation", "why_it_fits") if is_legacy_payload else ()
-        ),
-    )
-    if is_legacy_payload:
-        resource_assessment = _optional_str(data, "resource_assessment")
-        agent_prompt = _optional_str(data, "agent_prompt")
-    else:
-        resource_assessment = _required_str(data, "resource_assessment")
-        agent_prompt = _required_str(data, "agent_prompt")
     return IssueBrief(
         one_liner=_required_str(data, "one_liner"),
-        problem_summary=problem_summary,
-        background=_optional_str_list(data, "background", fallback_key="project_context"),
+        problem_summary=_required_str(data, "problem_summary"),
+        background=_optional_str_list(data, "background"),
         matched_interests=_optional_str_list(data, "matched_interests"),
         matched_skills=_optional_str_list(data, "matched_skills"),
-        resource_assessment=resource_assessment,
-        evidence=_optional_str_list(data, "evidence", fallback_key="likely_files"),
+        resource_assessment=_required_str(data, "resource_assessment"),
+        evidence=_optional_str_list(data, "evidence"),
         risks=_optional_str_list(data, "risks"),
-        first_steps=_optional_str_list(data, "first_steps", fallback_key="next_steps"),
+        first_steps=_optional_str_list(data, "first_steps"),
         validation_path=_optional_str_list(
             data,
             "validation_path",
-            fallback_key="agent_questions",
         ),
-        agent_prompt=agent_prompt,
+        agent_prompt=_required_str(data, "agent_prompt"),
         metadata=IssueBriefMetadata(
             source_updated_at=str(metadata.get("source_updated_at", "")),
             recommendation_reason=str(metadata.get("recommendation_reason", "")),
             profile_hash=str(metadata.get("profile_hash", "")),
             source_hash=str(metadata.get("source_hash", "")),
         ),
-        plain_explanation=_optional_str(data, "plain_explanation"),
-        why_it_fits=_optional_str(data, "why_it_fits") or _optional_str(metadata, "recommendation_reason"),
-        project_context=_optional_str_list(data, "project_context"),
-        likely_files=_optional_str_list(data, "likely_files"),
-        difficulty=_optional_str(data, "difficulty") or "unknown",
-        readiness=_optional_str(data, "readiness") or "needs review",
-        background_to_learn=_optional_str_list(data, "background_to_learn"),
-        next_steps=_optional_str_list(data, "next_steps"),
-        agent_questions=_optional_str_list(data, "agent_questions"),
     )
 
 
@@ -408,24 +371,14 @@ def _optional_str(data: dict[str, Any], key: str) -> str | None:
     return None
 
 
-def _optional_str_list(
-    data: dict[str, Any],
-    key: str,
-    *,
-    fallback_key: str | None = None,
-) -> list[str]:
+def _optional_str_list(data: dict[str, Any], key: str) -> list[str]:
     sentinel = object()
     value = data.get(key, sentinel)
     if value is None or value is sentinel:
         return []
     if not isinstance(value, list):
         raise ValueError(f"Invalid list field: {key}")
-    parsed = [str(item).strip() for item in value if isinstance(item, str) and item.strip()]
-    if not parsed and fallback_key is not None:
-        fallback = data.get(fallback_key)
-        if isinstance(fallback, list):
-            return [str(item).strip() for item in fallback if isinstance(item, str) and item.strip()]
-    return parsed
+    return [str(item).strip() for item in value if isinstance(item, str) and item.strip()]
 
 
 def _coerce_scalar_string(value: Any, *, default: str = "") -> str:
