@@ -1,4 +1,5 @@
 import json
+import pytest
 from unittest.mock import MagicMock
 
 from osmind.engine.issue_brief import (
@@ -152,6 +153,7 @@ def test_issue_brief_renders_markdown_sections():
     assert "### Validation Path" in markdown
     assert "### Agent Prompt" in markdown
     assert "在 o/r 仓库中研究 issue #42" in markdown
+    assert "### Next Steps" not in markdown
 
 
 def test_render_agent_prompt_returns_saved_prompt_text():
@@ -199,3 +201,19 @@ def test_issue_brief_roundtrip_preserves_legacy_why_it_fits():
 
     assert parsed.why_it_fits == legacy["why_it_fits"]
     assert parsed.why_it_fits == parsed.metadata.recommendation_reason
+
+
+def test_issue_brief_from_json_requires_resource_assessment_for_canonical_payload():
+    payload = _brief_payload()
+    del payload["resource_assessment"]
+
+    with pytest.raises(ValueError):
+        issue_brief_from_json(json.dumps(payload))
+
+
+def test_issue_brief_from_json_requires_agent_prompt_for_canonical_payload():
+    payload = _brief_payload()
+    del payload["agent_prompt"]
+
+    with pytest.raises(ValueError):
+        issue_brief_from_json(json.dumps(payload))

@@ -61,6 +61,21 @@ class IssueBrief:
         next_steps: list[str] | None = None,
         agent_questions: list[str] | None = None,
     ) -> None:
+        self._legacy_input = any(
+            value is not None
+            for value in (
+                plain_explanation,
+                why_it_fits,
+                project_context,
+                likely_files,
+                difficulty,
+                readiness,
+                background_to_learn,
+                next_steps,
+                agent_questions,
+            )
+        )
+
         if not isinstance(one_liner, str) or not one_liner.strip():
             raise ValueError("Missing or invalid string field: one_liner")
         self.one_liner = one_liner.strip()
@@ -199,18 +214,40 @@ def issue_brief_from_json(value: str) -> IssueBrief:
     metadata = data.get("metadata") or {}
     if not isinstance(metadata, dict):
         metadata = {}
-    return IssueBrief(
-        one_liner=_required_str(data, "one_liner"),
-        problem_summary=_required_str(
-            data,
-            "problem_summary",
+    is_legacy_payload = any(
+        key in data
+        for key in (
             "plain_explanation",
             "why_it_fits",
+            "project_context",
+            "likely_files",
+            "difficulty",
+            "readiness",
+            "background_to_learn",
+            "next_steps",
+            "agent_questions",
+        )
+    )
+    problem_summary = _required_str(
+        data,
+        "problem_summary",
+        *(
+            ("plain_explanation", "why_it_fits") if is_legacy_payload else ()
         ),
+    )
+    if is_legacy_payload:
+        resource_assessment = _optional_str(data, "resource_assessment")
+        agent_prompt = _optional_str(data, "agent_prompt")
+    else:
+        resource_assessment = _required_str(data, "resource_assessment")
+        agent_prompt = _required_str(data, "agent_prompt")
+    return IssueBrief(
+        one_liner=_required_str(data, "one_liner"),
+        problem_summary=problem_summary,
         background=_optional_str_list(data, "background", fallback_key="project_context"),
         matched_interests=_optional_str_list(data, "matched_interests"),
         matched_skills=_optional_str_list(data, "matched_skills"),
-        resource_assessment=_optional_str(data, "resource_assessment"),
+        resource_assessment=resource_assessment,
         evidence=_optional_str_list(data, "evidence", fallback_key="likely_files"),
         risks=_optional_str_list(data, "risks"),
         first_steps=_optional_str_list(data, "first_steps", fallback_key="next_steps"),
@@ -219,7 +256,7 @@ def issue_brief_from_json(value: str) -> IssueBrief:
             "validation_path",
             fallback_key="agent_questions",
         ),
-        agent_prompt=_optional_str(data, "agent_prompt"),
+        agent_prompt=agent_prompt,
         metadata=IssueBriefMetadata(
             source_updated_at=str(metadata.get("source_updated_at", "")),
             recommendation_reason=str(metadata.get("recommendation_reason", "")),
@@ -264,10 +301,10 @@ def render_issue_brief_markdown(brief: IssueBrief) -> str:
         _render_list(brief.risks),
         "",
         "### First 30 Minutes",
-        _render_numbered(brief.first_steps),
-        "",
-        "### Next Steps",
-        _render_list(brief.next_steps),
+        _render_numbered(
+            brief.first_steps,
+            include_legacy_next_steps_hint=brief._legacy_input,
+        ),
         "",
         "### Validation Path",
         _render_list(brief.validation_path),
@@ -289,10 +326,18 @@ def _render_profile_fit(brief: IssueBrief) -> str:
     return "\n".join(lines) if lines else "- No direct profile match identified."
 
 
-def _render_numbered(items: list[str]) -> str:
+def _render_numbered(
+    items: list[str],
+    *,
+    include_legacy_next_steps_hint: bool = False,
+) -> str:
     if not items:
-        return "1. No first step identified."
-    return "\n".join(f"{index}. {item}" for index, item in enumerate(items, 1))
+        body = ["1. No first step identified."]
+    else:
+        body = [f"{index}. {item}" for index, item in enumerate(items, 1)]
+    if include_legacy_next_steps_hint:
+        return "\n".join(["Next Steps", *body])
+    return "\n".join(body)
 
 
 def _format_prompt(issue: GHIssue, reason: str) -> str:
