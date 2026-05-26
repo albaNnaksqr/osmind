@@ -796,7 +796,7 @@ async def test_discover_view_issue_separates_analysis_from_source(temp_config, m
     assert "Issue Brief" in str(source)
     assert str(source).count("Issue Brief") == 1
     assert "One-Liner" in str(source)
-    assert "Next Steps" in str(source)
+    assert "First 30 Minutes" in str(source)
     assert "这是 tokenizer cache 泄漏问题" in str(source)
     assert "Original Issue" in str(source)
     assert "The tokenizer cache keeps growing." in str(source)

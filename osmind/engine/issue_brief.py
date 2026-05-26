@@ -61,21 +61,6 @@ class IssueBrief:
         next_steps: list[str] | None = None,
         agent_questions: list[str] | None = None,
     ) -> None:
-        self._legacy_input = any(
-            value is not None
-            for value in (
-                plain_explanation,
-                why_it_fits,
-                project_context,
-                likely_files,
-                difficulty,
-                readiness,
-                background_to_learn,
-                next_steps,
-                agent_questions,
-            )
-        )
-
         if not isinstance(one_liner, str) or not one_liner.strip():
             raise ValueError("Missing or invalid string field: one_liner")
         self.one_liner = one_liner.strip()
@@ -301,10 +286,7 @@ def render_issue_brief_markdown(brief: IssueBrief) -> str:
         _render_list(brief.risks),
         "",
         "### First 30 Minutes",
-        _render_numbered(
-            brief.first_steps,
-            include_legacy_next_steps_hint=brief._legacy_input,
-        ),
+        _render_numbered(brief.first_steps),
         "",
         "### Validation Path",
         _render_list(brief.validation_path),
@@ -326,18 +308,10 @@ def _render_profile_fit(brief: IssueBrief) -> str:
     return "\n".join(lines) if lines else "- No direct profile match identified."
 
 
-def _render_numbered(
-    items: list[str],
-    *,
-    include_legacy_next_steps_hint: bool = False,
-) -> str:
+def _render_numbered(items: list[str]) -> str:
     if not items:
-        body = ["1. No first step identified."]
-    else:
-        body = [f"{index}. {item}" for index, item in enumerate(items, 1)]
-    if include_legacy_next_steps_hint:
-        return "\n".join(["Next Steps", *body])
-    return "\n".join(body)
+        return "1. No first step identified."
+    return "\n".join(f"{index}. {item}" for index, item in enumerate(items, 1))
 
 
 def _format_prompt(issue: GHIssue, reason: str) -> str:
