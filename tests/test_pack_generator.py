@@ -227,16 +227,15 @@ def test_issue_pack_uses_structured_brief_sections():
     )
     brief = IssueBrief(
         one_liner="Tokenizer cache grows without bound.",
-        plain_explanation="The tokenizer retains entries for long sequences.",
-        why_it_fits="Matches current inference memory investigations.",
-        project_context=["Tokenizer cache owns sequence memoization."],
-        likely_files=["src/tokenizer/cache.py"],
-        difficulty="medium",
-        readiness="ready",
-        background_to_learn=["Tokenizer cache initialization and eviction."],
-        next_steps=["搜索 tokenizer cache 代码", "跑一遍最小复现路径"],
-        agent_questions=["复现测试先失败", "如何确认缓存键是否越界"],
+        problem_summary="The tokenizer retains entries for long sequences.",
+        background=["Tokenizer cache owns sequence memoization.", "Tokenizer cache initialization and eviction."],
+        matched_interests=["SGLang"],
+        matched_skills=["Python"],
+        resource_assessment="Difficulty: medium; Readiness: ready.",
+        evidence=["Tokenizer cache keeps long-sequence states."],
         risks=["Issue 可能缺少完整复现脚本", "性能基线还未确认"],
+        first_steps=["搜索 tokenizer cache 代码", "跑一遍最小复现路径"],
+        validation_path=["复现测试先失败", "如何确认缓存键是否越界"],
         agent_prompt="请在 o/r 中分析 tokenizer cache leak issue",
     )
 
