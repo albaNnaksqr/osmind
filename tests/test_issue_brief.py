@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 from osmind.engine.issue_brief import (
     IssueBrief,
     IssueBriefGenerator,
+    render_agent_prompt,
     issue_brief_from_json,
     render_issue_brief_markdown,
 )
@@ -25,17 +26,42 @@ def _issue() -> GHIssue:
 
 def _brief_payload() -> dict:
     return {
-        "one_liner": "Add Qwen3MoE support by following the Qwen2 adapter.",
-        "plain_explanation": "The issue asks for a new model adapter.",
-        "why_it_fits": "It is scoped to model adaptation work.",
-        "project_context": ["Existing Qwen2 code is the likely template."],
-        "likely_files": ["osmind/models/qwen3_moe.py"],
-        "difficulty": "medium",
-        "readiness": "ready",
-        "background_to_learn": ["Qwen model config mapping"],
-        "next_steps": ["Find the Qwen2 adapter", "Add a minimal Qwen3MoE config"],
-        "agent_questions": ["Which tests cover model adapter registration?"],
-        "risks": ["Architecture differences may need deeper changes."],
+        "one_liner": "这是一个模型适配问题，可以先沿着 Qwen2 adapter 找入口。",
+        "problem_summary": "Issue 要求为 Qwen3MoE 增加模型支持，并参考已有 Qwen2 adapter。",
+        "background": [
+            "模型适配通常涉及 config mapping、权重加载和注册路径。",
+            "Issue 文本给出了 Qwen2 adapter 作为可搜索模板。",
+        ],
+        "matched_interests": ["SGLang inference optimization"],
+        "matched_skills": ["Python"],
+        "resource_assessment": "资源风险较低；第一步主要是代码阅读和小范围测试，不依赖大 GPU。",
+        "evidence": [
+            "Title mentions Qwen3MoE support.",
+            "Body says to follow the existing Qwen2 adapter.",
+            "Label good first issue suggests scoped external contribution.",
+        ],
+        "risks": ["Qwen3MoE 架构差异可能导致适配范围超过 config mapping。"],
+        "first_steps": [
+            "搜索 Qwen2 adapter 和 model registry。",
+            "确认 Qwen3MoE config 名称、权重键和 tokenizer 是否已有支持。",
+            "找一个最小加载或注册测试作为验证点。",
+        ],
+        "validation_path": [
+            "能定位现有 Qwen2 adapter。",
+            "能说明 Qwen3MoE 需要新增或复用哪些注册入口。",
+            "能跑一个最小模型配置或相关单测。",
+        ],
+        "agent_prompt": (
+            "在 o/r 仓库中研究 issue #42: Add Qwen3MoE support。"
+            "先搜索 Qwen2 adapter、model registry 和 Qwen3MoE 相关符号，"
+            "总结最小实现路径和可验证测试；如果找不到注册入口，停止并说明缺失信息。"
+        ),
+        "metadata": {
+            "source_updated_at": "2026-05-15T01:02:03+00:00",
+            "recommendation_reason": "Recommended by ranker",
+            "profile_hash": "profile-hash",
+            "source_hash": "source-hash",
+        },
     }
 
 
@@ -66,29 +92,25 @@ def test_issue_brief_generator_falls_back_when_llm_returns_invalid_json():
     brief = IssueBriefGenerator(llm).generate(issue, reason="Good first issue with clear adapter template.")
 
     assert brief.one_liner == "Add Qwen3MoE support"
-    assert "Need to add Qwen3MoE model support" in brief.plain_explanation
-    assert "Good first issue with clear adapter template." in brief.why_it_fits
-    assert brief.project_context == ["Repo: o/r", "Labels: good first issue, model"]
-    assert brief.likely_files == []
-    assert brief.difficulty == "unknown"
-    assert brief.readiness == "needs review"
-    assert "Read the issue body and linked discussion." in brief.next_steps
-    assert brief.agent_questions
+    assert "Good first issue with clear adapter template." in brief.problem_summary
+    assert brief.background == ["Repo: o/r", "Labels: good first issue, model", "Issue URL: https://github.com/o/r/issues/42"]
+    assert brief.first_steps[0] == "Read the issue body and linked discussion."
+    assert brief.matched_interests == []
     assert brief.risks
 
 
 def test_issue_brief_generator_falls_back_when_list_fields_are_blank():
     llm = MagicMock()
     payload = _brief_payload()
-    payload["next_steps"] = ["  "]
+    payload["first_steps"] = ["  "]
     llm.chat.return_value = json.dumps(payload)
     issue = _issue()
 
     brief = IssueBriefGenerator(llm).generate(issue, reason="Clear fit.")
 
-    assert brief.one_liner == "Add Qwen3MoE support"
-    assert "Clear fit." in brief.why_it_fits
-    assert "The LLM did not return a valid structured brief." in brief.risks
+    assert brief.one_liner == "这是一个模型适配问题，可以先沿着 Qwen2 adapter 找入口。"
+    assert brief.first_steps == []
+    assert "Issue 要求为 Qwen3MoE 增加模型支持" in brief.problem_summary
 
 
 def test_issue_brief_renders_markdown_sections():
@@ -98,19 +120,29 @@ def test_issue_brief_renders_markdown_sections():
 
     assert markdown.startswith("## Issue Brief")
     assert "### One-Liner" in markdown
-    assert "### Difficulty / Readiness" in markdown
-    assert "- Difficulty: medium" in markdown
-    assert "- Readiness: ready" in markdown
-    assert "### Explanation" in markdown
-    assert "### Why It Fits" in markdown
-    assert "### Project Context" in markdown
-    assert "- Existing Qwen2 code is the likely template." in markdown
-    assert "### Likely Files" in markdown
-    assert "- `osmind/models/qwen3_moe.py`" in markdown
+    assert "这是一个模型适配问题" in markdown
+    assert "### Problem Summary" in markdown
+    assert "Issue 要求为 Qwen3MoE 增加模型支持" in markdown
     assert "### Background" in markdown
-    assert "### Next Steps" in markdown
-    assert "### Agent Questions" in markdown
-    assert "### Risks" in markdown
+    assert "### Why It May Fit You" in markdown
+    assert "- Interest: SGLang inference optimization" in markdown
+    assert "- Skill: Python" in markdown
+    assert "### Resource Assessment" in markdown
+    assert "资源风险较低" in markdown
+    assert "### Evidence" in markdown
+    assert "### Risks And Missing Evidence" in markdown
+    assert "### First 30 Minutes" in markdown
+    assert "搜索 Qwen2 adapter" in markdown
+    assert "### Validation Path" in markdown
+    assert "### Agent Prompt" in markdown
+    assert "在 o/r 仓库中研究 issue #42" in markdown
+
+
+def test_render_agent_prompt_returns_saved_prompt_text():
+    brief = IssueBrief(**_brief_payload())
+
+    assert render_agent_prompt(brief).startswith("在 o/r 仓库中研究 issue #42")
+    assert "停止并说明缺失信息" in render_agent_prompt(brief)
 
 
 def test_issue_brief_json_roundtrip():
