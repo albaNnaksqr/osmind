@@ -2359,6 +2359,67 @@ async def test_discover_start_work_writes_pack_with_agent_prompt(temp_config, mo
 
 
 @pytest.mark.asyncio
+async def test_discover_start_work_updates_existing_basic_pack_with_agent_prompt(temp_config, monkeypatch):
+    from osmind.cache.store import CacheStore
+    from osmind.engine.issue_brief import (
+        IssueBrief,
+        IssueBriefProfileContext,
+        issue_brief_metadata,
+    )
+    from osmind.github.models import GHIssue
+    from osmind.services.library import PackLibrary
+    from osmind.tui.screens.discover import DiscoverScreen
+
+    issue = GHIssue(
+        number=47,
+        title="Tokenizer leak",
+        body="Body",
+        labels=["bug"],
+        url="https://github.com/o/r/issues/47",
+        repo="o/r",
+        state="open",
+        updated_at="u47",
+        reason="cached fit reason",
+    )
+    cache_path = temp_config.notes_vault / "osmind" / ".cache" / "osmind.db"
+    library = PackLibrary(temp_config.notes_vault, cache_path, resources=temp_config.resources)
+    library.write_issue_pack(issue)
+    brief = IssueBrief(
+        **_issue_brief_payload(
+            one_liner="Cached packet brief.",
+            problem_summary="cached fit reason",
+            agent_prompt="请用 cached brief 升级已有 packet。",
+        )
+    )
+    brief.metadata = issue_brief_metadata(
+        issue,
+        "cached fit reason",
+        IssueBriefProfileContext(
+            interests=["SGLang"],
+            skills=["Python"],
+            resources={"gpus": "4x RTX 4090"},
+        ),
+    )
+    cache = CacheStore(cache_path)
+    cache.upsert_issue(issue)
+    cache.update_issue_brief(issue.repo, issue.number, brief.to_json())
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        monkeypatch.setattr(discover, "_get_selected_issue", lambda: issue)
+
+        await discover.action_start_work()
+
+    path = temp_config.notes_vault / "osmind" / "o_r" / "issue-47-tokenizer-leak.md"
+    markdown = path.read_text(encoding="utf-8")
+    assert "decision: continue" in markdown
+    assert "## Issue Brief" in markdown
+    assert "## Agent Prompt" in markdown
+    assert "请用 cached brief 升级已有 packet。" in markdown
+
+
+@pytest.mark.asyncio
 async def test_discover_start_work_generates_packet_and_shows_plan(temp_config, monkeypatch):
     from osmind.github.models import GHIssue
     from osmind.tui.screens.discover import DiscoverScreen

@@ -678,15 +678,15 @@ class DiscoverScreen(Vertical):
 
     async def _set_issue_decision(self, issue, decision: str) -> Path:
         path = self._pack_path_for_issue(issue)
-        if path is None:
-            brief = None
-            try:
-                brief = await self._load_or_generate_issue_brief(issue)
-            except Exception:
-                log_exception(
-                    self.app.config.notes_vault,
-                    f"Failed to generate Issue Brief before writing pack for {issue.repo}#{issue.number}",
-                )
+        brief = None
+        try:
+            brief = await self._load_or_generate_issue_brief(issue)
+        except Exception:
+            log_exception(
+                self.app.config.notes_vault,
+                f"Failed to generate Issue Brief before writing pack for {issue.repo}#{issue.number}",
+            )
+        if brief is not None or path is None:
             path = await asyncio.to_thread(lambda: self._library().write_issue_pack(issue, brief=brief))
             self._pack_paths_by_key[self._pack_key(issue)] = str(path)
         path = await asyncio.to_thread(
