@@ -2,8 +2,8 @@ from __future__ import annotations
 import asyncio
 import os
 from pathlib import Path
-import webbrowser
 from textual.app import ComposeResult
+from textual.css.query import NoMatches
 from textual.widgets import Label, LoadingIndicator, Select, Static
 from textual.containers import Vertical, Horizontal
 from osmind.decision import format_decision_panel
@@ -71,13 +71,13 @@ class DiscoverScreen(Vertical):
         ("space", "decide", "Decide"),
         ("w", "start_work", "Start Work"),
         ("o", "open_pack", "Open Packet"),
-        ("g", "open_github", "GitHub"),
     ]
 
     def __init__(self):
         super().__init__()
         self._issues_by_number: dict[str, object] = {}
         self._pack_paths_by_key: dict[tuple[str, str, int], str] = {}
+        self._issue_brief_tasks: dict[tuple[str, str, int], asyncio.Task] = {}
         self._action_filter = "active"
         self._issue_detail_request_id = 0
 
@@ -88,12 +88,12 @@ class DiscoverScreen(Vertical):
         with Horizontal(id="toolbar"):
             yield Select(options, id="repo-select", value=initial)
             yield Select(self.ACTION_FILTERS, id="action-filter", value="active")
-            yield Label("  u: Load/update  a: Filter  Enter: Details  g: GitHub  w: Start Work", id="hint")
+            yield Label("  u: Load/update opportunities  a: Filter  Enter: Details  w: Start Work", id="hint")
             yield Static("Filter: Active | No opportunities loaded", id="freshness-status")
         yield LoadingIndicator(id="loader")
         with Vertical(id="issue-list-view"):
             yield IssueTable(id="issue-table")
-            yield Static(_empty_state_checklist(self.app.config), id="issue-summary-panel")
+            yield Static("[dim]选中 issue 后按 Enter 查看推荐动作、资源解释和原文。[/dim]", id="issue-summary-panel")
         with Vertical(id="issue-detail-view"):
             yield Static(
                 "[dim]Tab 切换 Analysis/Source。Esc/q 返回列表。Space 决策。w Start Work。o 打开 Packet。[/dim]",
@@ -254,7 +254,10 @@ class DiscoverScreen(Vertical):
             loader.display = False
 
     def _selected_repo(self, *, notify: bool = True) -> str | None:
-        repo_select = self.query_one("#repo-select", Select)
+        try:
+            repo_select = self.query_one("#repo-select", Select)
+        except NoMatches:
+            return None
         if repo_select.value is Select.BLANK:
             if notify:
                 self.notify("请先选择 repo", severity="warning")
@@ -444,7 +447,7 @@ class DiscoverScreen(Vertical):
 
             hint = self.query_one("#hint", Label)
             hint.update(
-                "  ↑↓ navigate  Enter: Details  g: GitHub  Space: Decide  w: Start Work  o: Open  u: Load/Update"
+                "  ↑↓ navigate  Enter: Details  Space: Decide  w: Start Work  o: Open  u: Load/Update"
             )
             self.query_one("#loader", LoadingIndicator).display = False
             if failures:
@@ -488,28 +491,10 @@ class DiscoverScreen(Vertical):
         loader = self.query_one("#loader", LoadingIndicator)
         loader.display = True
         try:
-            from osmind.engine.issue_brief import (
-                IssueBriefGenerator,
-                render_issue_brief_markdown,
-            )
-            from osmind.engine.llm import LLMClient
+            from osmind.engine.issue_brief import render_issue_brief_markdown
 
-            llm_cfg = self.app.config.llm
-
-            def _load_or_generate_brief_markdown():
-                cache = self._cache()
-                brief = self._cached_issue_brief(issue)
-                if brief is None:
-                    llm = LLMClient(llm_cfg)
-                    brief = IssueBriefGenerator(llm).generate(
-                        issue,
-                        reason=issue.reason,
-                        profile_context=self._issue_brief_profile_context(),
-                    )
-                    cache.update_issue_brief(issue.repo, issue.number, brief.to_json())
-                return render_issue_brief_markdown(brief)
-
-            brief_markdown = await asyncio.to_thread(_load_or_generate_brief_markdown)
+            brief = await self._load_or_generate_issue_brief(issue)
+            brief_markdown = render_issue_brief_markdown(brief)
             if self._is_current_issue_detail_request(request_id):
                 source.update(_format_issue_source(issue, brief_markdown))
         except Exception as e:
@@ -546,7 +531,7 @@ class DiscoverScreen(Vertical):
         self.query_one("#issue-analysis-panel", Static).can_focus = True
         self.query_one("#issue-source-panel", Static).can_focus = True
         self.query_one("#hint", Label).update(
-            "  Tab: Analysis/Source  Esc/q: Back  g: GitHub  Space: Decide  w: Start Work  o: Open"
+            "  Tab: Analysis/Source  Esc/q: Back  Space: Decide  w: Start Work  o: Open"
         )
 
     def _show_list(self) -> None:
@@ -583,6 +568,15 @@ class DiscoverScreen(Vertical):
         cache_path = self.app.config.notes_vault / "osmind" / ".cache" / "osmind.db"
         return CacheStore(cache_path)
 
+    def _issue_brief_profile_context(self):
+        from osmind.engine.issue_brief import IssueBriefProfileContext
+
+        return IssueBriefProfileContext(
+            interests=list(self.app.config.interests),
+            skills=list(self.app.config.skills),
+            resources=dict(self.app.config.resources),
+        )
+
     def _pack_key(self, issue) -> tuple[str, str, int]:
         return (issue.repo, "issue", issue.number)
 
@@ -607,25 +601,46 @@ class DiscoverScreen(Vertical):
             return None
         try:
             brief = issue_brief_from_json(cached_json)
-            if not is_issue_brief_current(
-                brief,
-                issue,
-                issue.reason,
-                self._issue_brief_profile_context(),
-            ):
-                return None
         except Exception:
+            return None
+        if not is_issue_brief_current(
+            brief,
+            issue,
+            issue.reason,
+            self._issue_brief_profile_context(),
+        ):
             return None
         return brief
 
-    def _issue_brief_profile_context(self):
-        from osmind.engine.issue_brief import IssueBriefProfileContext
+    async def _load_or_generate_issue_brief(self, issue):
+        cached = self._cached_issue_brief(issue)
+        if cached is not None:
+            return cached
 
-        return IssueBriefProfileContext(
-            interests=list(self.app.config.interests),
-            skills=list(self.app.config.skills),
-            resources=dict(self.app.config.resources or {}),
-        )
+        pack_key = self._pack_key(issue)
+        existing_task = self._issue_brief_tasks.get(pack_key)
+        if existing_task is not None:
+            return await existing_task
+
+        def _generate():
+            from osmind.engine.issue_brief import IssueBriefGenerator
+            from osmind.engine.llm import LLMClient
+
+            llm = LLMClient(self.app.config.llm)
+            brief = IssueBriefGenerator(llm).generate(
+                issue,
+                reason=issue.reason,
+                profile_context=self._issue_brief_profile_context(),
+            )
+            self._cache().update_issue_brief(issue.repo, issue.number, brief.to_json())
+            return brief
+
+        task = asyncio.create_task(asyncio.to_thread(_generate))
+        self._issue_brief_tasks[pack_key] = task
+        try:
+            return await task
+        finally:
+            self._issue_brief_tasks.pop(pack_key, None)
 
     async def action_start_work(self) -> None:
         issue = self._get_selected_issue()
@@ -633,13 +648,10 @@ class DiscoverScreen(Vertical):
             self.notify("先选中一个 issue", severity="warning")
             return
         try:
-            path = self._pack_path_for_issue(issue)
-            if path is None:
-                brief = self._cached_issue_brief(issue)
-                path = await asyncio.to_thread(lambda: self._library().write_issue_pack(issue, brief=brief))
-                self._pack_paths_by_key[self._pack_key(issue)] = str(path)
-                self._update_freshness_status()
+            pack_was_missing = self._pack_path_for_issue(issue) is None
             path = await self._set_issue_decision(issue, "continue")
+            if pack_was_missing:
+                self._update_freshness_status()
             markdown = path.read_text(encoding="utf-8")
             self.query_one("#start-work-panel", Static).update(
                 format_start_work_from_packet(markdown, self.app.config.resources)
@@ -666,8 +678,15 @@ class DiscoverScreen(Vertical):
 
     async def _set_issue_decision(self, issue, decision: str) -> Path:
         path = self._pack_path_for_issue(issue)
-        if path is None:
-            brief = self._cached_issue_brief(issue)
+        brief = None
+        try:
+            brief = await self._load_or_generate_issue_brief(issue)
+        except Exception:
+            log_exception(
+                self.app.config.notes_vault,
+                f"Failed to generate Issue Brief before writing pack for {issue.repo}#{issue.number}",
+            )
+        if brief is not None or path is None:
             path = await asyncio.to_thread(lambda: self._library().write_issue_pack(issue, brief=brief))
             self._pack_paths_by_key[self._pack_key(issue)] = str(path)
         path = await asyncio.to_thread(
@@ -688,7 +707,14 @@ class DiscoverScreen(Vertical):
             self.notify("先选中一个 issue", severity="warning")
             return
         try:
-            brief = self._cached_issue_brief(issue)
+            brief = None
+            try:
+                brief = await self._load_or_generate_issue_brief(issue)
+            except Exception:
+                log_exception(
+                    self.app.config.notes_vault,
+                    f"Failed to generate Issue Brief before writing pack for {issue.repo}#{issue.number}",
+                )
             path = await asyncio.to_thread(lambda: self._library().write_issue_pack(issue, brief=brief))
             self._pack_paths_by_key[self._pack_key(issue)] = str(path)
             self.notify(f"Contribution Packet saved: {path}", timeout=5)
@@ -716,21 +742,6 @@ class DiscoverScreen(Vertical):
             log_path = log_exception(
                 self.app.config.notes_vault,
                 f"Failed to open Contribution Packet for {issue.repo}#{issue.number}",
-            )
-            self.notify(f"{e} (log: {log_path})", severity="error")
-
-    def action_open_github(self) -> None:
-        issue = self._get_selected_issue()
-        if not issue:
-            self.notify("先选中一个 issue", severity="warning")
-            return
-        try:
-            with suspend_if_supported(self.app):
-                open_url(issue.url)
-        except Exception as e:
-            log_path = log_exception(
-                self.app.config.notes_vault,
-                f"Failed to open GitHub issue for {issue.repo}#{issue.number}",
             )
             self.notify(f"{e} (log: {log_path})", severity="error")
 
@@ -808,25 +819,6 @@ class DiscoverScreen(Vertical):
 
     async def key_x(self) -> None:
         await self.action_launch_codex()
-
-
-def open_url(url: str) -> None:
-    webbrowser.open(url)
-
-
-def _empty_state_checklist(config) -> str:
-    repo = config.watching[0]["repo"] if getattr(config, "watching", None) else "not selected"
-    token_status = "OK" if os.environ.get("GITHUB_TOKEN") else "Missing"
-    llm_status = "Configured" if config.llm.base_url and config.llm.model else "Missing"
-    output_dir = getattr(config, "output_dir", config.notes_vault)
-    return (
-        "[bold]Next checklist[/bold]\n"
-        f"- repo: {repo}\n"
-        f"- GitHub token: {token_status}\n"
-        f"- LLM: {llm_status} ({config.llm.model})\n"
-        f"- output: {output_dir}\n"
-        "- Press u to load cached opportunities or fetch from GitHub."
-    )
 
 
 def _format_issue_analysis(issue, resources: dict | None = None) -> str:

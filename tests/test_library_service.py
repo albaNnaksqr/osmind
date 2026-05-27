@@ -251,29 +251,73 @@ def test_write_issue_pack_can_include_issue_brief(tmp_path):
     notes_vault = tmp_path / "notes"
     cache_path = tmp_path / "cache" / "osmind.db"
     brief = IssueBrief(
-        one_liner="Tokenizer cache grows without bound.",
-        plain_explanation="The tokenizer retains entries for long sequences.",
-        why_it_fits="It matches the current memory profiling focus.",
-        project_context=["Tokenizer cache owns sequence memoization."],
-        likely_files=["src/tokenizer/cache.py"],
-        difficulty="medium",
-        readiness="ready",
-        background_to_learn=["Read the tokenizer cache implementation."],
-        next_steps=["Add a failing memory regression test."],
-        agent_questions=["Which cache key keeps growing?"],
-        risks=["Memory behavior may depend on input shape."],
+        one_liner="tokenizer cache 泄漏 issue",
+        problem_summary="Tokenizer cache may grow due to missing eviction paths.",
+        background=["Tokenizer cache path: src/tokenizer/cache.py.", "模型推理路径和 tokenizer cache 初始化。"],
+        matched_interests=["SGLang"],
+        matched_skills=["Python"],
+        resource_assessment="难度中等，已知可复现。",
+        evidence=["Tokenizer cache 相关代码在 `src/tokenizer/cache.py`。", "Issue 可能缺少完整复现脚本"],
+        risks=["Issue 可能缺少完整复现脚本", "当前 repo 可能缺少 tokenizer 重现数据。"],
+        first_steps=["阅读并搜索 tokenizer cache 相关实现", "先执行复现脚本"],
+        validation_path=["复现测试先失败", "如何复现该问题"],
+        agent_prompt="请在 o/r 中分析 tokenizer cache 泄漏 issue",
+    )
+    issue = GHIssue(
+        number=7,
+        title="tokenizer cache 泄漏 issue",
+        body="Memory grows on long prompt batches.",
+        labels=["bug", "tokenizer"],
+        url="https://github.com/o/r/issues/7",
+        repo="o/r",
+        state="open",
+        reason="Interest: SGLang\nSkill: Python",
     )
     library = PackLibrary(notes_vault, cache_path)
 
-    path = library.write_issue_pack(_issue(), brief=brief)
+    path = library.write_issue_pack(issue, brief=brief)
 
     markdown = path.read_text(encoding="utf-8")
+    rec_snap = markdown.index("## Recommendation Snapshot")
+    issue_brief = markdown.index("## Issue Brief")
+    fit = markdown.index("## Why It May Fit You")
+    risks = markdown.index("## Risks And Missing Evidence")
+    first_30 = markdown.index("## First 30 Minutes")
+    validation = markdown.index("## Validation Path")
+    prompt = markdown.index("## Agent Prompt")
+    continue_log = markdown.index("## Continue Or Stop Criteria")
+
     assert "## Recommendation Snapshot" in markdown
+    assert rec_snap < issue_brief < fit < risks < first_30 < validation < prompt < continue_log
     assert "## Issue Brief" in markdown
-    assert "### One-Liner" in markdown
-    assert "Tokenizer cache grows without bound." in markdown
-    assert markdown.index("## Recommendation Snapshot") < markdown.index("## Issue Brief")
-    assert markdown.index("## Issue Brief") < markdown.index("## Why It May Fit You")
+    issue_brief_section = markdown[issue_brief:fit]
+    assert issue_brief_section.index("### One-Liner") < issue_brief_section.index("### Problem Summary")
+    assert issue_brief_section.index("### Problem Summary") < issue_brief_section.index("### Background")
+    assert "### One-Liner" in issue_brief_section
+    assert "Tokenizer cache may grow due to missing eviction paths." in issue_brief_section
+    assert "### Problem Summary" in issue_brief_section
+    assert "### Background" in issue_brief_section
+    assert "- Tokenizer cache path: src/tokenizer/cache.py." in issue_brief_section
+
+    why_section = markdown[fit:risks]
+    assert "### Matched Interests" in why_section
+    assert "### Matched Skills" in why_section
+    assert "### Resource Assessment" in why_section
+    assert "### Evidence" in why_section
+    assert "Interest: SGLang" in why_section
+    assert "Skill: Python" in why_section
+
+    risks_section = markdown[risks:first_30]
+    assert "### Risks" in risks_section
+    assert "## Risks And Missing Evidence" in markdown
+    assert risks_section.count("Issue 可能缺少完整复现脚本") == 1
+    assert "Issue 可能缺少完整复现脚本" in markdown
+    assert "## First 30 Minutes" in markdown
+    assert "阅读并搜索 tokenizer cache 相关实现" in markdown
+    assert "## Validation Path" in markdown
+    assert "复现测试先失败" in markdown
+    assert "## Agent Prompt" in markdown
+    assert "请在 o/r 中分析 tokenizer cache 泄漏 issue" in markdown
     assert markdown.count("## Issue Brief") == 1
 
 
