@@ -501,7 +501,7 @@ async def test_discover_action_filter_cycles_visible_recommendations(temp_config
 
         assert table.row_count == 3
 
-        await pilot.press("a")
+        discover.action_cycle_action_filter()
         await pilot.pause()
 
         assert table.row_count == 1
@@ -2470,16 +2470,15 @@ def test_discover_bindings_keep_only_core_opportunity_actions():
     keys_by_action = {b[1]: b[0] for b in DiscoverScreen.BINDINGS}
     bound_keys = {b[0] for b in DiscoverScreen.BINDINGS}
 
-    assert bindings_by_action["open_pack"] == "Open Packet"
+    assert bindings_by_action["open_pack"] == "Open"
     assert bindings_by_action["decide"] == "Decide"
-    assert bindings_by_action["update"] == "Load/Update"
+    assert bindings_by_action["update"] == "Update"
     assert bindings_by_action["start_work"] == "Start Work"
     assert keys_by_action["update"] == "u"
     assert keys_by_action["start_work"] == "w"
     assert keys_by_action["decide"] == "space"
     assert keys_by_action["view_issue"] == "enter"
-    assert ("v", "view_issue", "View Issue") in DiscoverScreen.BINDINGS
-    assert {"f", "s", "g", "y", "l", "n"}.isdisjoint(bound_keys)
+    assert {"a", "f", "s", "g", "v", "y", "l", "n"}.isdisjoint(bound_keys)
     assert "r" not in {binding[0] for binding in DiscoverScreen.BINDINGS}
 
 
@@ -2848,7 +2847,7 @@ async def test_settings_screen_reports_runtime_health(temp_config):
 
     assert "GitHub token" in content
     assert "LLM" in content
-    assert "Notes vault" in content
+    assert "Output dir" in content
     assert "Resources" in content
     assert "4x RTX 4090" in content
 

@@ -31,14 +31,15 @@ osmind solves this by:
 
 ## Workflow
 
-1. Configure watched repositories in `profile.yaml`.
-2. Run `osmind`.
-3. Use Discover to review the cached opportunity queue, or press `u` to choose between reading cache and fetching fresh GitHub data.
-4. Press `Enter` to inspect an issue, then press `w` when you want to start work; osmind generates or updates the Contribution Packet and marks it Continue.
-5. Press `Space` when you want to remove an item from the active queue as Defer or Discard.
-6. Press `o` to open the packet in your editor or Obsidian.
-7. Read the pack alongside GitHub or a local checkout.
-8. Use Packs and Review to revisit generated material.
+1. Create `profile.yaml` with `osmind init`.
+2. Run `osmind doctor` to check your profile, output directory, GitHub token, LLM config, and external agent commands.
+3. Run `osmind`.
+4. Use Discover to review the cached opportunity queue, or press `u` to choose between reading cache and fetching fresh GitHub data.
+5. Press `Enter` to inspect an issue.
+6. Press `w` when you want to start work; osmind generates or updates the Contribution Packet and marks it Continue.
+7. Press `Space` when you want to remove an item from the active queue as Defer or Discard.
+8. Press `o` to open the packet in your editor or Obsidian.
+9. Use Packs and Review to revisit generated material.
 
 ## How it works
 
@@ -48,7 +49,7 @@ osmind has four modes:
 
 Turns open issues from your watched repos into an opportunity queue. Discover shows the cached queue when it exists; press `u` to choose `Read Cache` or `Fetch + Rank`. If there is no cache for the selected repo, `u` fetches from GitHub directly. Each issue is scored by a local or remote LLM. The list leads with the recommended action and the reason, so a topic can be highly relevant but still be deferred if your configured GPUs or time budget make it hard to reproduce.
 
-The default Discover queue is `Active`: issues you have not deferred or discarded, plus previously deferred/discarded issues whose upstream content or configured resources changed. The status line shows how many issues are visible, which action filter is active, when the repo was last fetched, when issues were last ranked, how many are still unranked, how many already have packets, and how many items are deferred, discarded, or changed. Press `a` to cycle the visible queue through `Active`, `Do now`, `Review`, `Rec Defer`, `Skip`, `Packeted`, `Deferred`, `Discarded`, `Changed`, and `All`.
+The default Discover queue is `Active`: issues you have not deferred or discarded, plus previously deferred/discarded issues whose upstream content or configured resources changed. The status line shows how many issues are visible, which action filter is active, when the repo was last fetched, when issues were last ranked, how many are still unranked, how many already have packets, and how many items are deferred, discarded, or changed. Use the action-filter dropdown to switch between `Active`, `Do now`, `Review`, `Rec Defer`, `Skip`, `Packeted`, `Deferred`, `Discarded`, `Changed`, and `All`.
 
 Open an issue detail view to see the recommendation and source evidence side by side. The left `Analysis` pane starts with a structured decision panel: `Recommendation`, `Decision Factors`, and `Evidence` show the action, reason tag, next step, priority, fit, resource fit, actionability, configured resources, and source signals before the continue/stop criteria. The right `Source` pane contains a Chinese `Issue Brief` with `Why It May Fit You`, `Risks And Missing Evidence`, `First 30 Minutes`, `Validation Path`, and `Agent Prompt`, followed by the original issue text and comments. Press `Tab` to switch panes. Press `w` to generate or update the Contribution Packet, mark it Continue, and open the Start Work panel. Press `Space` to choose Defer or Discard; osmind writes the decision to the packet frontmatter, appends it to the Decision Log, records the current resource profile, and updates the local index. Deferred and discarded issues leave the Active queue until GitHub updates the issue or your `resources` config changes. Press `o` to open an existing packet for the selected issue.
 
@@ -62,7 +63,7 @@ osmind reads generated Contribution Packets and asks Socratic review questions. 
 
 ### Settings
 
-Shows the effective runtime health of the local setup: GitHub token presence, LLM endpoint and model, notes vault, cache path, configured resources, watched repos, and whether the external agent commands are on `PATH`.
+Shows the effective runtime health of the local setup: GitHub token presence, LLM endpoint and model, output directory, cache path, configured resources, watched repos, and whether the external agent commands are on `PATH`.
 
 ## Installation
 
@@ -74,13 +75,25 @@ cd osmind
 pip install -e .
 ```
 
+## Quick Start
+
+Create a profile, check your local setup, then launch the TUI:
+
+```bash
+osmind init
+osmind doctor
+osmind
+```
+
+In Discover, press `u` to load or fetch opportunities, `Enter` to view the issue brief and original text, and `w` to generate a Contribution Packet when you are ready to start.
+
 ## Configuration
 
 ```bash
-cp profile.yaml.example profile.yaml
+osmind init
 ```
 
-Edit `profile.yaml`:
+You can also copy `profile.yaml.example` and edit it manually:
 
 ```yaml
 interests:
@@ -99,7 +112,7 @@ watching:
   - repo: THUDM/slime
   - repo: sgl-project/sglang
 
-notes_vault: ~/workspace/Note  # your Obsidian vault path
+output_dir: ~/workspace/osmind-packets  # where packets, cache, and logs are written
 
 llm:
   base_url: http://localhost:30000/v1  # SGLang local endpoint, or any OpenAI-compatible API
@@ -110,6 +123,8 @@ external_agents:
   claude_code: claude
   codex: codex
 ```
+
+Existing configs that use `notes_vault` still work; new configs should prefer `output_dir`.
 
 `resources` is part of recommendation scoring. For example, if an issue matches your interests but likely requires a much larger GPU setup than `4x RTX 4090`, osmind should mark resource fit as blocked or risky and lower the priority.
 
@@ -130,7 +145,7 @@ osmind
 Runtime errors shown in the TUI are also written with traceback details to:
 
 ```text
-<notes_vault>/osmind/.cache/osmind.log
+<output_dir>/osmind/.cache/osmind.log
 ```
 
 ## LLM backend
@@ -154,8 +169,7 @@ For the ranking and Socratic use case, a 7B–27B local model is sufficient.
 | `p` | Packs tab |
 | `r` | Review tab |
 | `t` | Settings tab |
-| `u` | Load cached opportunities or fetch from GitHub and rank again (Discover) |
-| `a` | Cycle the Discover action filter |
+| `u` | Update the Discover queue from cache or GitHub |
 | `Enter` | Inspect selected issue in Discover, or read selected packet in Packs |
 | `Tab` | Switch between Analysis and Source panes in issue detail (Discover) |
 | `Esc` / `q` | Return from detail, packet reader, or Start Work views |

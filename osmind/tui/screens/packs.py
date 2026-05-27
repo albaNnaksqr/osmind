@@ -29,7 +29,7 @@ class PacksScreen(Vertical):
     """
     BINDINGS = [
         ("enter", "view_pack", "Read Packet"),
-        ("o", "open_pack", "Open Packet"),
+        ("o", "open_pack", "Open"),
         ("w", "start_work", "Start Work"),
         ("space", "decide", "Decide"),
         ("escape", "back_to_list", "Back"),
@@ -40,14 +40,14 @@ class PacksScreen(Vertical):
         with Vertical(id="packs-list-view"):
             yield Label("[bold]Contribution Packets[/bold]", markup=True)
             yield DataTable(id="packs-table", cursor_type="row")
-            yield Label("[dim]Enter: read  Space: decide  w: start work  o: open[/dim]", markup=True)
+            yield Label("[dim]Enter: Read  w: Start Work  Space: Decide  o: Open[/dim]", markup=True)
         with Vertical(id="packet-reader-view"):
-            yield Static("[dim]↑↓ 选择 section。Esc/q 返回列表。o 外部打开。w Start Work。[/dim]", id="packet-reader-hint")
+            yield Static("[dim]w: Start Work  o: Open  Esc: Back[/dim]", id="packet-reader-hint")
             with Horizontal(id="packet-reader-body"):
                 yield DataTable(id="packet-section-table", cursor_type="row")
                 yield Markdown("", id="packet-markdown")
         with Vertical(id="pack-start-work-view"):
-            yield Static("[dim]Esc/q 返回列表。o 打开 Packet。[/dim]", id="pack-start-work-hint")
+            yield Static("[dim]o: Open  Esc: Back[/dim]", id="pack-start-work-hint")
             yield Static("", id="pack-start-work-panel")
 
     def on_mount(self) -> None:

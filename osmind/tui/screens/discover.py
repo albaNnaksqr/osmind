@@ -61,16 +61,14 @@ class DiscoverScreen(Vertical):
     }
     """
     BINDINGS = [
-        ("u", "update", "Load/Update"),
-        ("a", "cycle_action_filter", "Filter"),
+        ("u", "update", "Update"),
         ("tab", "toggle_detail_focus", "Switch Pane"),
-        ("v", "view_issue", "View Issue"),
-        ("enter", "view_issue", "View Issue"),
+        ("enter", "view_issue", "Detail"),
         ("escape", "back_to_list", "Back"),
         ("q", "back_to_list", "Back"),
         ("space", "decide", "Decide"),
         ("w", "start_work", "Start Work"),
-        ("o", "open_pack", "Open Packet"),
+        ("o", "open_pack", "Open"),
     ]
 
     def __init__(self):
@@ -88,22 +86,22 @@ class DiscoverScreen(Vertical):
         with Horizontal(id="toolbar"):
             yield Select(options, id="repo-select", value=initial)
             yield Select(self.ACTION_FILTERS, id="action-filter", value="active")
-            yield Label("  u: Load/update opportunities  a: Filter  Enter: Details  w: Start Work", id="hint")
+            yield Label("  Enter: Detail  w: Start Work  Space: Decide  o: Open  u: Update", id="hint")
             yield Static("Filter: Active | No opportunities loaded", id="freshness-status")
         yield LoadingIndicator(id="loader")
         with Vertical(id="issue-list-view"):
             yield IssueTable(id="issue-table")
-            yield Static("[dim]选中 issue 后按 Enter 查看推荐动作、资源解释和原文。[/dim]", id="issue-summary-panel")
+            yield Static("[dim]Enter 查看详情。w 开始处理。Space 决策。o 打开 Packet。[/dim]", id="issue-summary-panel")
         with Vertical(id="issue-detail-view"):
             yield Static(
-                "[dim]Tab 切换 Analysis/Source。Esc/q 返回列表。Space 决策。w Start Work。o 打开 Packet。[/dim]",
+                "[dim]Tab: Pane  w: Start Work  Space: Decide  o: Open  Esc: Back[/dim]",
                 id="issue-detail-hint",
             )
             with Horizontal(id="issue-detail-content"):
                 yield Static("", id="issue-analysis-panel")
                 yield Static("", id="issue-source-panel")
         with Vertical(id="start-work-view"):
-            yield Static("[dim]Esc/q 返回列表。o 打开 Packet。[/dim]", id="start-work-hint")
+            yield Static("[dim]o: Open  Esc: Back[/dim]", id="start-work-hint")
             yield Static("", id="start-work-panel")
 
     def on_mount(self) -> None:
@@ -226,7 +224,7 @@ class DiscoverScreen(Vertical):
     def _show_cached_issues(self, cached_issues) -> None:
         self._show_issues(cached_issues)
         self.query_one("#hint", Label).update(
-            f"  {len(cached_issues)} cached opportunities  ↑↓ navigate  Enter: details  Space: decide  w: start work"
+            f"  {len(cached_issues)} cached opportunities  Enter: Detail  w: Start Work  Space: Decide  o: Open  u: Update"
         )
         self.query_one("#loader", LoadingIndicator).display = False
 
@@ -401,7 +399,7 @@ class DiscoverScreen(Vertical):
         for issue in issues:
             cache.upsert_issue(issue)
         self._show_issues(issues)
-        self.query_one("#hint", Label).update(f"  {len(issues)} opportunities • ranking…  ↑↓ navigate  Enter: Details")
+        self.query_one("#hint", Label).update(f"  {len(issues)} opportunities • ranking…  Enter: Detail")
         self.query_one("#loader", LoadingIndicator).display = False
         await self._score_progressively(issues, repo, token)
 
@@ -447,7 +445,7 @@ class DiscoverScreen(Vertical):
 
             hint = self.query_one("#hint", Label)
             hint.update(
-                "  ↑↓ navigate  Enter: Details  Space: Decide  w: Start Work  o: Open  u: Load/Update"
+                "  Enter: Detail  w: Start Work  Space: Decide  o: Open  u: Update"
             )
             self.query_one("#loader", LoadingIndicator).display = False
             if failures:
@@ -531,7 +529,7 @@ class DiscoverScreen(Vertical):
         self.query_one("#issue-analysis-panel", Static).can_focus = True
         self.query_one("#issue-source-panel", Static).can_focus = True
         self.query_one("#hint", Label).update(
-            "  Tab: Analysis/Source  Esc/q: Back  Space: Decide  w: Start Work  o: Open"
+            "  Tab: Pane  w: Start Work  Space: Decide  o: Open  Esc: Back"
         )
 
     def _show_list(self) -> None:
@@ -674,7 +672,7 @@ class DiscoverScreen(Vertical):
         panel = self.query_one("#start-work-panel", Static)
         panel.can_focus = True
         panel.focus()
-        self.query_one("#hint", Label).update("  Esc/q: Back  o: Open Packet")
+        self.query_one("#hint", Label).update("  o: Open  Esc: Back")
 
     async def _set_issue_decision(self, issue, decision: str) -> Path:
         path = self._pack_path_for_issue(issue)
