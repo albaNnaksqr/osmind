@@ -1,12 +1,16 @@
 from __future__ import annotations
+import argparse
+import os
 from pathlib import Path
+import shutil
 import sys
+import yaml
 
 from textual.app import App, ComposeResult
 from textual.css.query import NoMatches
 from textual.widgets import DataTable, Footer, Header, Input, TabbedContent, TabPane
 
-from osmind.config import Config
+from osmind.config import Config, ConfigError
 from osmind.tui.screens.discover import DiscoverScreen
 from osmind.tui.screens.packs import PacksScreen
 from osmind.tui.screens.review import ReviewScreen
@@ -139,14 +143,130 @@ class OsmindApp(App):
             self.query_one("#settings-health").focus()
 
 
-def main():
-    profile_path = Path("profile.yaml")
+def main(argv: list[str] | None = None) -> None:
+    args = _parse_args(argv)
+    profile_path = args.profile
+
+    if args.command == "init":
+        _run_init(profile_path)
+        return
+    if args.command == "doctor":
+        _run_doctor(profile_path)
+        return
+
     if not profile_path.exists():
-        print("profile.yaml not found. Copy profile.yaml.example and edit it.")
+        print("profile.yaml not found. Run `osmind init` to create it.")
         sys.exit(1)
     config = Config.from_file(profile_path)
     app = OsmindApp(config)
     app.run()
+
+
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="osmind")
+    parser.add_argument("--profile", type=Path, default=Path("profile.yaml"), help="Path to profile.yaml")
+    subparsers = parser.add_subparsers(dest="command")
+
+    init_parser = subparsers.add_parser("init", help="Create a profile.yaml interactively")
+    init_parser.add_argument("--profile", type=Path, default=argparse.SUPPRESS, help="Path to write")
+
+    doctor_parser = subparsers.add_parser("doctor", help="Check profile and local runtime prerequisites")
+    doctor_parser.add_argument("--profile", type=Path, default=argparse.SUPPRESS, help="Path to check")
+
+    return parser.parse_args(argv)
+
+
+def _run_init(profile_path: Path) -> None:
+    if profile_path.exists():
+        print(f"{profile_path} already exists; remove it or pass --profile to write elsewhere.")
+        return
+
+    interests = _prompt_csv("Interests (comma-separated)", ["open source", "systems"])
+    skills = _prompt_csv("Skills (comma-separated)", ["Python"])
+    resources = {
+        "gpus": _prompt("GPUs/resources", "none"),
+        "time": _prompt("Time budget", "part-time"),
+    }
+    watching = [{"repo": repo} for repo in _prompt_lines("Repositories to watch, one per line")]
+    if not watching:
+        watching = [{"repo": "owner/repo"}]
+
+    output_dir = _prompt("Output dir", "~/workspace/osmind-packets")
+    llm = {
+        "base_url": _prompt("LLM base_url", "http://localhost:30000/v1"),
+        "model": _prompt("LLM model", "Qwen3.5-27B"),
+        "api_key": _prompt("LLM api_key", "placeholder"),
+    }
+    external_agents = {
+        "claude_code": _prompt("Claude Code command", "claude"),
+        "codex": _prompt("Codex command", "codex"),
+    }
+
+    profile = {
+        "interests": interests,
+        "skills": skills,
+        "resources": resources,
+        "watching": watching,
+        "output_dir": output_dir,
+        "llm": llm,
+        "external_agents": external_agents,
+    }
+    profile_path.parent.mkdir(parents=True, exist_ok=True)
+    profile_path.write_text(yaml.safe_dump(profile, sort_keys=False, allow_unicode=True))
+    print(f"Wrote {profile_path}")
+    print("Next: run `osmind doctor` to verify GitHub token, LLM config, and agent commands.")
+
+
+def _run_doctor(profile_path: Path) -> None:
+    if not profile_path.exists():
+        print(f"Profile: Missing {profile_path}")
+        print("Run `osmind init` to create a profile.")
+        return
+
+    try:
+        config = Config.from_file(profile_path)
+    except ConfigError as exc:
+        print(f"Profile: Invalid {profile_path} ({exc})")
+        return
+
+    output_dir = config.output_dir or config.notes_vault
+    print(f"Profile: OK {profile_path}")
+    print(f"Output dir: {_plain_status('OK' if output_dir.exists() else 'Will create')} {output_dir}")
+    print(f"GitHub token: {_plain_status('OK' if os.environ.get('GITHUB_TOKEN') else 'Missing')} GITHUB_TOKEN")
+    print(
+        f"LLM: {_plain_status('Configured' if config.llm.base_url and config.llm.model else 'Missing')} "
+        f"{config.llm.model} @ {config.llm.base_url}"
+    )
+    print(f"Claude Code: {_plain_command_status(config.external_agents.claude_code)}")
+    print(f"Codex: {_plain_command_status(config.external_agents.codex)}")
+
+
+def _prompt(label: str, default: str) -> str:
+    value = input(f"{label} [{default}]: ").strip()
+    return value or default
+
+
+def _prompt_csv(label: str, default: list[str]) -> list[str]:
+    value = _prompt(label, ", ".join(default))
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _prompt_lines(label: str) -> list[str]:
+    print(f"{label}; submit an empty line when done:")
+    values: list[str] = []
+    while True:
+        value = input("> ").strip()
+        if not value:
+            return values
+        values.append(value)
+
+
+def _plain_status(label: str) -> str:
+    return label
+
+
+def _plain_command_status(command: str) -> str:
+    return f"found `{command}`" if shutil.which(command) else f"not found `{command}`"
 
 
 if __name__ == "__main__":

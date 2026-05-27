@@ -56,3 +56,23 @@ def test_notes_vault_expanded(tmp_path):
     p.write_text(SAMPLE)
     cfg = Config.from_file(p)
     assert not str(cfg.notes_vault).startswith("~")
+
+
+def test_output_dir_is_preferred_and_notes_vault_remains_compatible(tmp_path):
+    p = tmp_path / "profile.yaml"
+    output_dir = tmp_path / "out"
+    p.write_text(SAMPLE.replace("notes_vault: ~/workspace/Note", f"output_dir: {output_dir}"))
+
+    cfg = Config.from_file(p)
+
+    assert cfg.output_dir == output_dir
+    assert cfg.notes_vault == output_dir
+
+
+def test_legacy_notes_vault_sets_output_dir(tmp_path):
+    p = tmp_path / "profile.yaml"
+    p.write_text(SAMPLE)
+
+    cfg = Config.from_file(p)
+
+    assert cfg.output_dir == cfg.notes_vault

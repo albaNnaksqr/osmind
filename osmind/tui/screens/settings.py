@@ -30,8 +30,8 @@ class SettingsScreen(Vertical):
 
 def _format_health(config) -> str:
     token = os.environ.get("GITHUB_TOKEN", "")
-    vault = config.notes_vault
-    cache_path = vault / "osmind" / ".cache" / "osmind.db"
+    output_dir = getattr(config, "output_dir", config.notes_vault)
+    cache_path = output_dir / "osmind" / ".cache" / "osmind.db"
     resources = _format_mapping(config.resources) if config.resources else "not configured"
     watching = ", ".join(repo["repo"] for repo in config.watching) if config.watching else "none"
     claude_status = _command_status(config.external_agents.claude_code)
@@ -44,7 +44,7 @@ def _format_health(config) -> str:
             f"GitHub token: {_status('OK' if token else 'Missing')} GITHUB_TOKEN",
             f"LLM: {_status('Configured' if config.llm.base_url and config.llm.model else 'Missing')} "
             f"{config.llm.model} @ {config.llm.base_url}",
-            f"Notes vault: {_status('OK' if vault.exists() else 'Will create')} {vault}",
+            f"Output dir: {_status('OK' if output_dir.exists() else 'Will create')} {output_dir}",
             f"Cache: {cache_path}",
             f"Resources: {resources}",
             f"Watching: {watching}",

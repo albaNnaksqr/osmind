@@ -17,7 +17,8 @@ watching:
   - repo: THUDM/slime
   - repo: sgl-project/sglang
 
-notes_vault: ~/workspace/Note   # path to your Obsidian vault
+output_dir: ~/workspace/osmind-packets   # where osmind writes packets, cache, and logs
+# Legacy configs can still use notes_vault instead of output_dir.
 
 llm:
   base_url: http://localhost:30000/v1  # SGLang local, or https://api.openai.com/v1

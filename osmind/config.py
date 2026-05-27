@@ -31,13 +31,22 @@ class Config:
     notes_vault: Path
     llm: LLMConfig
     external_agents: AgentConfig
+    output_dir: Path | None = None
+
+    def __post_init__(self) -> None:
+        if self.output_dir is None:
+            self.output_dir = self.notes_vault
 
     @classmethod
     def from_file(cls, path: Path) -> "Config":
         data = yaml.safe_load(path.read_text())
-        for field in ("interests", "skills", "watching", "notes_vault", "llm", "external_agents"):
+        for field in ("interests", "skills", "watching", "llm", "external_agents"):
             if field not in data:
                 raise ConfigError(f"Missing required field: {field}")
+        output_dir_raw = data.get("output_dir") or data.get("notes_vault")
+        if not output_dir_raw:
+            raise ConfigError("Missing required field: output_dir")
+        output_dir = Path(output_dir_raw).expanduser()
         llm = data["llm"]
         agents = data["external_agents"]
         return cls(
@@ -45,7 +54,7 @@ class Config:
             skills=data["skills"],
             resources=data.get("resources", {}),
             watching=data["watching"],
-            notes_vault=Path(data["notes_vault"]).expanduser(),
+            notes_vault=output_dir,
             llm=LLMConfig(
                 base_url=llm["base_url"],
                 model=llm["model"],
@@ -56,4 +65,5 @@ class Config:
                 claude_code=agents.get("claude_code", "claude"),
                 codex=agents.get("codex", "codex"),
             ),
+            output_dir=output_dir,
         )
