@@ -114,7 +114,7 @@ class IssueBrief:
             self.resource_assessment = resource_assessment.strip()
         else:
             difficulty_text = _coerce_scalar_string(difficulty) or "unknown"
-            readiness_text = _coerce_scalar_string(readiness) or "needs review"
+            readiness_text = _coerce_scalar_string(readiness) or "needs inspection"
             self.resource_assessment = f"Difficulty: {difficulty_text}; Readiness: {readiness_text}."
 
         self.evidence = _coerce_str_list(evidence)
@@ -212,7 +212,7 @@ class IssueBrief:
             self.resource_assessment,
             "readiness",
         )
-        return parsed_readiness or "needs review"
+        return parsed_readiness or "needs inspection"
 
     @property
     def background_to_learn(self) -> list[str]:

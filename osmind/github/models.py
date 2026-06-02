@@ -27,6 +27,9 @@ class GHIssue:
     fit: str = "unknown"
     resource_fit: str = "unknown"
     actionability: str = "unknown"
+    assignees: list[str] = field(default_factory=list)
+    comment_count: int = 0
+    grounding: list[str] = field(default_factory=list)  # repo-verified flags
 
 
 @dataclass

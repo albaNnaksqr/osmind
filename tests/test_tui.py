@@ -64,35 +64,33 @@ async def test_tab_navigation(mock_config):
     async with app.run_test() as pilot:
         from textual.widgets import TabbedContent
         tabs = app.query_one(TabbedContent)
-        # Verify BINDINGS list covers all three tabs
+        # Verify BINDINGS list covers the visible workflow tabs.
         binding_actions = {b[1] for b in app.BINDINGS}
         assert "switch_tab('discover')" in binding_actions
         assert "switch_tab('packs')" in binding_actions
-        assert "switch_tab('review')" in binding_actions
         assert "switch_tab('settings')" in binding_actions
+        assert "switch_tab('review')" not in binding_actions
         # Verify tab IDs exist in the TabbedContent
         tab_ids = {pane.id for pane in tabs.query("TabPane")}
         assert "discover" in tab_ids
         assert "packs" in tab_ids
         assert "learn" not in tab_ids
-        assert "review" in tab_ids
+        assert "review" not in tab_ids
         assert "settings" in tab_ids
 
 
 @pytest.mark.asyncio
-async def test_escape_moves_focus_from_review_input_back_to_table(temp_config):
-    from textual.widgets import DataTable, Input
+async def test_hidden_review_tab_switch_is_ignored(temp_config):
+    from textual.widgets import TabbedContent
 
     app = OsmindApp(temp_config)
     async with app.run_test() as pilot:
+        tabs = app.query_one(TabbedContent)
+        assert tabs.active == "discover"
+
         app.action_switch_tab("review")
-        review_input = app.query_one("#review-input", Input)
-        review_table = app.query_one("#notes-table", DataTable)
-        review_input.focus()
 
-        await pilot.press("escape")
-
-        assert app.focused is review_table
+        assert tabs.active == "discover"
 
 
 @pytest.mark.asyncio
@@ -158,42 +156,31 @@ async def test_discover_hidden_agent_shortcuts_still_dispatch(temp_config, monke
     assert calls == ["claude", "codex"]
 
 
-def test_packs_reload_does_not_shadow_review_navigation_key():
+def test_packs_reload_has_no_hidden_review_key_to_shadow():
     from osmind.tui.app import OsmindApp
     from osmind.tui.screens.packs import PacksScreen
 
-    review_keys = {
-        binding[0]
-        for binding in OsmindApp.BINDINGS
-        if binding[1] == "switch_tab('review')"
-    }
     packs_reload_keys = {
         binding[0]
         for binding in PacksScreen.BINDINGS
         if binding[1] == "reload"
     }
 
-    assert packs_reload_keys.isdisjoint(review_keys)
+    assert "r" not in {binding[0] for binding in OsmindApp.BINDINGS}
+    assert "r" in packs_reload_keys or packs_reload_keys == set()
 
 
-def test_start_work_key_does_not_shadow_review_navigation_key():
-    from osmind.tui.app import OsmindApp
+def test_start_work_has_no_direct_key_in_discover_or_packs():
     from osmind.tui.screens.discover import DiscoverScreen
     from osmind.tui.screens.packs import PacksScreen
 
-    review_keys = {
-        binding[0]
-        for binding in OsmindApp.BINDINGS
-        if binding[1] == "switch_tab('review')"
-    }
     start_work_keys = {
         binding[0]
         for binding in [*DiscoverScreen.BINDINGS, *PacksScreen.BINDINGS]
         if binding[1] == "start_work"
     }
 
-    assert start_work_keys == {"w"}
-    assert start_work_keys.isdisjoint(review_keys)
+    assert start_work_keys == set()
 
 
 def test_packs_reader_reuses_enter_without_extra_view_keys():
@@ -204,6 +191,7 @@ def test_packs_reader_reuses_enter_without_extra_view_keys():
 
     assert keys_by_action["view_pack"] == "enter"
     assert keys_by_action["decide"] == "space"
+    assert "w" not in bound_keys
     assert "v" not in {binding[0] for binding in PacksScreen.BINDINGS}
     assert "m" not in {binding[0] for binding in PacksScreen.BINDINGS}
     assert {"y", "l", "n", "u"}.isdisjoint(bound_keys)
@@ -264,6 +252,42 @@ async def test_discover_fetch_does_not_request_issue_comments(temp_config, monke
         await discover.action_fetch()
 
     assert calls == [("sgl-project/sglang", 30, False)]
+
+
+@pytest.mark.asyncio
+async def test_discover_fetch_uses_repo_issue_limit(temp_config, monkeypatch):
+    from osmind.github.models import GHIssue
+    from osmind.tui.screens.discover import DiscoverScreen
+    import osmind.github.client
+
+    temp_config.watching = [{"repo": "sgl-project/sglang", "issue_limit": 75}]
+    calls = []
+
+    class RecordingGitHubClient:
+        def __init__(self, token=""):
+            pass
+
+        def get_issues(self, repo, limit=30, include_comments=False):
+            calls.append((repo, limit, include_comments))
+            return [GHIssue(42, "Tokenizer leak", "Body", [], "u", "o/r", "open")]
+
+    monkeypatch.setattr(osmind.github.client, "GitHubClient", RecordingGitHubClient)
+
+    app = OsmindApp(temp_config)
+    async with app.run_test() as pilot:
+        discover = app.query_one(DiscoverScreen)
+        await discover.action_fetch()
+
+    assert calls == [("sgl-project/sglang", 75, False)]
+
+
+def test_discover_issue_limit_defaults_when_config_is_invalid():
+    from osmind.tui.screens.discover import _issue_limit_for_repo
+
+    assert _issue_limit_for_repo([{"repo": "o/r"}], "o/r") == 30
+    assert _issue_limit_for_repo([{"repo": "o/r", "issue_limit": "abc"}], "o/r") == 30
+    assert _issue_limit_for_repo([{"repo": "o/r", "issue_limit": 0}], "o/r") == 30
+    assert _issue_limit_for_repo([{"repo": "o/r", "issue_limit": "120"}], "o/r") == 120
 
 
 @pytest.mark.asyncio
@@ -357,7 +381,7 @@ async def test_discover_loads_existing_cached_queue_on_mount_without_github(temp
 
         table = app.query_one(IssueTable)
         assert table.row_count == 1
-        assert table.get_row_at(0)[2] == "42"
+        assert table.get_row_at(0)[1] == "42"
 
 
 @pytest.mark.asyncio
@@ -427,8 +451,8 @@ async def test_discover_fetch_sorts_cached_issues_by_score_and_shows_reason(temp
         table = app.query_one(IssueTable)
         first_row = table.get_row_at(0)
 
-        assert first_row[2] == "2"
-        assert "high reason" in first_row[1]
+        assert first_row[1] == "2"
+        assert first_row[2] == "High match"
 
 
 @pytest.mark.asyncio
@@ -460,10 +484,10 @@ async def test_issue_table_shows_decision_oriented_recommendation_columns(temp_c
         labels = [str(column.label) for column in table.columns.values()]
         row = table.get_row_at(0)
 
-    assert labels == ["Action", "Why", "#", "Title", "Labels"]
+    assert labels == ["Action", "#", "Title"]
     assert row[0] == "Defer"
-    assert row[1].startswith("resource blocked:")
-    assert "当前 GPU 资源不足" in row[1]
+    assert row[1] == "42"
+    assert row[2] == "DeepSeek V4Pro reproduction fails"
 
 
 @pytest.mark.asyncio
@@ -533,7 +557,7 @@ async def test_discover_active_queue_hides_user_deferred_and_discarded_items(tem
         discover._show_issues([active, deferred, discarded])
 
         assert table.row_count == 1
-        assert table.get_row_at(0)[2] == "1"
+        assert table.get_row_at(0)[1] == "1"
         status = str(app.query_one("#freshness-status", Static).renderable)
         assert "Filter: Active" in status
         assert "Deferred: 1" in status
@@ -543,7 +567,7 @@ async def test_discover_active_queue_hides_user_deferred_and_discarded_items(tem
         await pilot.pause()
 
         assert table.row_count == 1
-        assert table.get_row_at(0)[2] == "2"
+        assert table.get_row_at(0)[1] == "2"
 
 
 @pytest.mark.asyncio
@@ -585,7 +609,7 @@ async def test_discover_active_queue_resurfaces_deferred_item_when_source_update
         discover._show_issues([issue])
 
         assert table.row_count == 1
-        assert table.get_row_at(0)[2] == "42"
+        assert table.get_row_at(0)[1] == "42"
         assert "Changed: 1" in str(app.query_one("#freshness-status", Static).renderable)
 
 
@@ -619,7 +643,7 @@ async def test_discover_active_queue_resurfaces_deferred_item_when_resources_cha
         discover._show_issues([issue])
 
         assert table.row_count == 1
-        assert table.get_row_at(0)[2] == "42"
+        assert table.get_row_at(0)[1] == "42"
         assert "Changed: 1" in str(app.query_one("#freshness-status", Static).renderable)
 
 
@@ -733,8 +757,8 @@ async def test_discover_scoring_reorders_rows_and_updates_reason(temp_config, mo
         await discover._score_progressively(issues, "o/r", "")
 
         first_row = table.get_row_at(0)
-        assert first_row[2] == "2"
-        assert "high reason" in first_row[1]
+        assert first_row[1] == "2"
+        assert first_row[2] == "High match"
 
 
 @pytest.mark.asyncio
@@ -794,8 +818,8 @@ async def test_discover_view_issue_separates_analysis_from_source(temp_config, m
 
         await discover.action_view_issue()
 
-        analysis = app.query_one("#issue-analysis-panel", Static).renderable
-        source = app.query_one("#issue-source-panel", Static).renderable
+        analysis = app.query_one("#issue-analysis-content", Static).renderable
+        source = app.query_one("#issue-source-content", Static).renderable
 
     assert "Recommendation" in str(analysis)
     assert "Decision Factors" in str(analysis)
@@ -807,6 +831,7 @@ async def test_discover_view_issue_separates_analysis_from_source(temp_config, m
     assert "Issue #42: Tokenizer leak" in str(source)
     assert "Issue Brief" in str(source)
     assert str(source).count("Issue Brief") == 1
+    assert "### One-Liner" not in str(source)
     assert "One-Liner" in str(source)
     assert "Problem Summary" in str(source)
     assert "Why It May Fit You" in str(source)
@@ -821,6 +846,53 @@ async def test_discover_view_issue_separates_analysis_from_source(temp_config, m
     assert long_tail in str(source)
     assert "Comments" in str(source)
     assert "maintainer: Please include a regression test." in str(source)
+
+
+def test_discover_source_formats_markdown_headings_as_plain_text():
+    from osmind.github.models import GHIssue, GHComment
+    from osmind.tui.screens.discover import _format_issue_source
+
+    issue = GHIssue(
+        42,
+        "Tool call parser",
+        "### Describe the bug\n\n<tool_call>\n<function=location>New York</function>\n</tool_call>",
+        ["bug"],
+        "https://github.com/o/r/issues/42",
+        "o/r",
+        "open",
+        comments=[
+            GHComment(
+                author="maintainer",
+                body="### Maintainer note\nPlease keep <function=location> intact.",
+                url="https://github.com/o/r/issues/42#issuecomment-1",
+                created_at="2026-06-01T00:00:00Z",
+            )
+        ],
+    )
+
+    source = _format_issue_source(issue, "### Issue Brief\n\n### First 30 Minutes\n1. Inspect parser.")
+
+    assert "###" not in source
+    assert "Issue Brief" in source
+    assert "First 30 Minutes" in source
+    assert "Describe the bug" in source
+    assert "Maintainer note" in source
+    assert "<function=location>New York</function>" in source
+
+
+def test_discover_github_ssl_error_message_explains_token_is_not_usually_the_cause(tmp_path):
+    from osmind.tui.screens.discover import _format_github_fetch_error
+
+    error = RuntimeError(
+        "HTTPSConnectionPool(host='api.github.com', port=443): "
+        "Max retries exceeded (Caused by SSLError(SSLEOFError()))"
+    )
+
+    message = _format_github_fetch_error("THUDM/slime", error, tmp_path / "osmind.log")
+
+    assert "GitHub 网络/SSL 连接失败" in message
+    assert "通常不是 token 问题" in message
+    assert "THUDM/slime" in message
 
 
 @pytest.mark.asyncio
@@ -889,7 +961,7 @@ async def test_discover_view_issue_uses_cached_issue_brief_without_llm(temp_conf
 
         await discover.action_view_issue()
 
-        source = app.query_one("#issue-source-panel", Static).renderable
+        source = app.query_one("#issue-source-content", Static).renderable
 
     assert "Cached tokenizer brief." in str(source)
     assert "Use cached next step." in str(source)
@@ -971,7 +1043,7 @@ async def test_discover_view_issue_regenerates_cached_brief_when_reason_changes(
 
         await discover.action_view_issue()
 
-        source = app.query_one("#issue-source-panel", Static).renderable
+        source = app.query_one("#issue-source-content", Static).renderable
 
     assert calls == [(42, "new recommendation reason")]
     assert "Fresh tokenizer brief." in str(source)
@@ -1052,7 +1124,7 @@ async def test_discover_view_issue_regenerates_cached_brief_when_profile_context
 
         await discover.action_view_issue()
 
-        source = app.query_one("#issue-source-panel", Static).renderable
+        source = app.query_one("#issue-source-content", Static).renderable
 
     assert len(calls) == 1
     assert calls[0].interests == ["SGLang"]
@@ -1112,7 +1184,7 @@ async def test_discover_view_issue_ignores_stale_slow_generation_result(temp_con
         release_slow.set()
         await first_task
 
-        source = app.query_one("#issue-source-panel", Static).renderable
+        source = app.query_one("#issue-source-content", Static).renderable
 
     assert "Issue #2: Second issue" in str(source)
     assert "Fast second brief." in str(source)
@@ -1151,7 +1223,7 @@ async def test_discover_view_issue_keeps_original_text_when_brief_generation_fai
 
         await discover.action_view_issue()
 
-        source = discover.query_one("#issue-source-panel", Static).renderable
+        source = discover.query_one("#issue-source-content", Static).renderable
 
     assert "Issue Brief 生成失败" in str(source)
     assert "详情见" in str(source)
@@ -1236,9 +1308,11 @@ async def test_discover_detail_tab_toggles_analysis_and_source_focus(temp_config
         table.cursor_coordinate = (0, 0)
         discover._issues_by_number = {str(issue.number): issue}
 
+        from textual.containers import VerticalScroll
+
         await discover.action_view_issue()
-        analysis = app.query_one("#issue-analysis-panel", Static)
-        source = app.query_one("#issue-source-panel", Static)
+        analysis = app.query_one("#issue-analysis-panel", VerticalScroll)
+        source = app.query_one("#issue-source-panel", VerticalScroll)
 
         assert app.focused is source
 
@@ -1287,13 +1361,15 @@ async def test_discover_enter_key_opens_issue_detail_from_focused_table(temp_con
         await pilot.press("enter")
         await pilot.pause()
 
+        from textual.containers import VerticalScroll
+
         assert app.query_one("#issue-list-view").display is False
         assert app.query_one("#issue-detail-view").display is True
-        assert app.focused is app.query_one("#issue-source-panel", Static)
+        assert app.focused is app.query_one("#issue-source-panel", VerticalScroll)
 
         await pilot.press("tab")
 
-        assert app.focused is app.query_one("#issue-analysis-panel", Static)
+        assert app.focused is app.query_one("#issue-analysis-panel", VerticalScroll)
 
 
 @pytest.mark.asyncio
@@ -1711,6 +1787,7 @@ async def test_direct_tab_activation_lazy_loads_existing_packs(temp_config):
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="Review tab is currently hidden from the TUI workflow.")
 async def test_switching_to_review_lazy_loads_existing_packs(temp_config):
     from osmind.github.models import GHPR
     from osmind.services.library import PackLibrary
@@ -1938,6 +2015,7 @@ Second answer.
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="Review tab is currently hidden from the TUI workflow.")
 async def test_review_delete_action_removes_last_answer_for_selected_pack(temp_config):
     from osmind.github.models import GHPR
     from osmind.services.library import PackLibrary
@@ -1977,6 +2055,7 @@ async def test_review_delete_action_removes_last_answer_for_selected_pack(temp_c
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="Review tab is currently hidden from the TUI workflow.")
 async def test_review_screen_lists_saved_answers_for_selected_pack(temp_config):
     from osmind.github.models import GHPR
     from osmind.services.library import PackLibrary
@@ -2013,6 +2092,7 @@ async def test_review_screen_lists_saved_answers_for_selected_pack(temp_config):
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="Review tab is currently hidden from the TUI workflow.")
 async def test_review_delete_action_removes_selected_answer_for_selected_pack(temp_config):
     from osmind.github.models import GHPR
     from osmind.services.library import PackLibrary
@@ -2055,6 +2135,7 @@ async def test_review_delete_action_removes_selected_answer_for_selected_pack(te
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="Review tab is currently hidden from the TUI workflow.")
 async def test_review_rewrite_action_replaces_selected_answer(temp_config):
     from osmind.github.models import GHPR
     from osmind.services.library import PackLibrary
@@ -2447,7 +2528,7 @@ async def test_discover_start_work_generates_packet_and_shows_plan(temp_config, 
         monkeypatch.setattr(discover, "_get_selected_issue", lambda: issue)
 
         await discover.action_start_work()
-        panel = app.query_one("#start-work-panel", Static)
+        panel = app.query_one("#start-work-content", Static)
 
         assert app.query_one("#issue-list-view").display is False
         assert app.query_one("#start-work-view").display is True
@@ -2470,16 +2551,19 @@ def test_discover_bindings_keep_only_core_opportunity_actions():
     keys_by_action = {b[1]: b[0] for b in DiscoverScreen.BINDINGS}
     bound_keys = {b[0] for b in DiscoverScreen.BINDINGS}
 
-    assert bindings_by_action["open_pack"] == "Open"
     assert bindings_by_action["decide"] == "Decide"
     assert bindings_by_action["update"] == "Update"
-    assert bindings_by_action["start_work"] == "Start Work"
+    assert bindings_by_action["view_issue"] == "View"
     assert keys_by_action["update"] == "u"
-    assert keys_by_action["start_work"] == "w"
     assert keys_by_action["decide"] == "space"
     assert keys_by_action["view_issue"] == "enter"
+    # Start Work is now a choice inside the decide dialog; Open lives on Packs.
+    assert "start_work" not in bindings_by_action
+    assert "open_pack" not in bindings_by_action
+    assert "w" not in bound_keys
+    assert "o" not in bound_keys
     assert {"a", "f", "s", "g", "v", "y", "l", "n"}.isdisjoint(bound_keys)
-    assert "r" not in {binding[0] for binding in DiscoverScreen.BINDINGS}
+    assert "r" not in bound_keys
 
 
 @pytest.mark.asyncio
@@ -2519,8 +2603,8 @@ async def test_discover_update_menu_can_read_cache_without_github(temp_config, m
         row = table.get_row_at(0)
 
     assert row[0] == "Skip"
-    assert "old cached reason" in row[1]
-    assert row[2] == "1"
+    assert row[1] == "1"
+    assert row[2] == "Cached issue"
     log_path = temp_config.notes_vault / "osmind" / ".cache" / "osmind.log"
     if log_path.exists():
         log_text = log_path.read_text(encoding="utf-8")
@@ -2593,8 +2677,8 @@ async def test_discover_update_menu_can_fetch_and_rescore(temp_config, monkeypat
     cached_new_issue = {issue.number: issue for issue in fresh_cache.list_issues("sgl-project/sglang")}[2]
     assert calls == [("sgl-project/sglang", 30, False)]
     assert row[0] == "Do now"
-    assert "fresh score" in row[1]
-    assert row[2] == "2"
+    assert row[1] == "2"
+    assert row[2] == "Fetched issue"
     assert cached_new_issue.priority == "high"
     assert cached_new_issue.reason == "fresh score"
 
@@ -2653,7 +2737,7 @@ async def test_discover_update_fetches_directly_when_no_cache(temp_config, monke
     cached_new_issue = {issue.number: issue for issue in fresh_cache.list_issues("sgl-project/sglang")}[2]
     assert calls == [("sgl-project/sglang", 30, False)]
     assert row[0] == "Do now"
-    assert "fresh score" in row[1]
+    assert row[1] == "2"
     assert cached_new_issue.reason == "fresh score"
 
 
@@ -2709,9 +2793,8 @@ async def test_discover_rescore_uses_cached_issues_without_github(temp_config, m
         row = table.get_row_at(0)
 
     assert row[0] == "Defer"
-    assert row[1].startswith("resource blocked:")
-    assert "rescored with current resources" in row[1]
-    assert row[2] == "42"
+    assert row[1] == "42"
+    assert row[2] == "Cached issue"
 
 
 @pytest.mark.asyncio
@@ -2746,6 +2829,8 @@ async def test_discover_space_decides_selected_choice(temp_config):
 
         assert isinstance(app.screen, DecisionDialog)
 
+        # Dialog now leads with "Start Work"; move down to the Defer row.
+        await pilot.press("down")
         await pilot.press("enter")
         await pilot.pause()
 
@@ -2821,14 +2906,14 @@ async def test_packs_space_decides_selected_packet_from_menu_choice(temp_config)
 
 
 @pytest.mark.asyncio
-async def test_review_screen_uses_contribution_packet_language(temp_config):
+async def test_review_screen_is_hidden_from_visible_workflow(temp_config):
     from textual.widgets import Label
 
     app = OsmindApp(temp_config)
     async with app.run_test() as pilot:
         labels = [str(label.renderable) for label in app.query(Label)]
 
-    assert any("Contribution Packets" in label for label in labels)
+    assert not any("Saved Review Q/A" in label for label in labels)
 
 
 @pytest.mark.asyncio

@@ -321,6 +321,51 @@ def test_write_issue_pack_can_include_issue_brief(tmp_path):
     assert markdown.count("## Issue Brief") == 1
 
 
+def test_write_issue_pack_includes_repo_grounding_when_checkout_configured(tmp_path):
+    notes_vault = tmp_path / "notes"
+    cache_path = tmp_path / "cache" / "osmind.db"
+    checkout = tmp_path / "repo"
+    source = checkout / "src"
+    tests = checkout / "tests"
+    source.mkdir(parents=True)
+    tests.mkdir(parents=True)
+    (source / "parser.py").write_text(
+        "QWEN = 'qwen25'\n"
+        "def parse_tool_calls(value):\n"
+        "    return []\n",
+        encoding="utf-8",
+    )
+    (tests / "test_parser.py").write_text(
+        "def test_qwen25_tool_calls():\n"
+        "    assert 'tool_calls'\n",
+        encoding="utf-8",
+    )
+    issue = GHIssue(
+        number=26790,
+        title="Qwen tool call parser returns empty tool_calls",
+        body="`qwen25` returns empty `tool_calls`.",
+        labels=["bug"],
+        url="https://github.com/sgl-project/sglang/issues/26790",
+        repo="sgl-project/sglang",
+        state="open",
+    )
+    library = PackLibrary(
+        notes_vault,
+        cache_path,
+        repo_paths={"sgl-project/sglang": checkout},
+    )
+
+    path = library.write_issue_pack(issue)
+
+    markdown = path.read_text(encoding="utf-8")
+    assert "## Repo Grounding" in markdown
+    assert "`src/parser.py" in markdown
+    assert "`tests/test_parser.py" in markdown
+    assert "Repo-Grounded First Steps" in markdown
+    assert "Read `src/parser.py` first" in markdown
+    assert "Open `tests/test_parser.py`" in markdown
+
+
 def test_write_issue_pack_reuses_cached_path_and_preserves_user_content_on_retitle(tmp_path):
     notes_vault = tmp_path / "notes"
     cache_path = tmp_path / "cache" / "osmind.db"

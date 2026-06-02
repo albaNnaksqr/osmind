@@ -3,6 +3,10 @@ from github import Github
 from osmind.github.models import GHComment, GHIssue, GHPR, PRFile
 
 
+GITHUB_TIMEOUT_SECONDS = 10
+GITHUB_RETRY_ATTEMPTS = 2
+
+
 def _iso(dt) -> str:
     return dt.isoformat() if dt else ""
 
@@ -10,9 +14,10 @@ def _iso(dt) -> str:
 class GitHubClient:
     def __init__(self, token: str):
         if token:
-            self._gh = Github(token, timeout=10, retry=0)
+            self._gh = Github(token, timeout=GITHUB_TIMEOUT_SECONDS, retry=GITHUB_RETRY_ATTEMPTS)
         else:
-            self._gh = Github(timeout=10, retry=0)  # unauthenticated: public repos, 60 req/hr
+            # unauthenticated: public repos, 60 req/hr
+            self._gh = Github(timeout=GITHUB_TIMEOUT_SECONDS, retry=GITHUB_RETRY_ATTEMPTS)
 
     def get_issues(
         self,
@@ -49,6 +54,8 @@ class GitHubClient:
                 state=i.state,
                 updated_at=_iso(i.updated_at),
                 comments=comments,
+                assignees=[a.login for a in (i.assignees or []) if a],
+                comment_count=i.comments or 0,
             ))
         return issues
 

@@ -7,15 +7,67 @@ import sys
 import yaml
 
 from textual.app import App, ComposeResult
+from textual.containers import Center, Middle, VerticalScroll
 from textual.css.query import NoMatches
-from textual.widgets import DataTable, Footer, Header, Input, TabbedContent, TabPane
+from textual.screen import ModalScreen
+from textual.widgets import DataTable, Footer, Header, Input, Static, TabbedContent, TabPane
 
 from osmind.config import Config, ConfigError
 from osmind.tui.screens.discover import DiscoverScreen
 from osmind.tui.screens.packs import PacksScreen
-from osmind.tui.screens.review import ReviewScreen
 from osmind.tui.screens.settings import SettingsScreen
 from osmind.tui.widgets.issue_list import IssueTable
+
+
+HELP_TEXT = """[b]Osmind — 快捷键与工作流[/b]
+
+[b cyan]标签切换（任意界面可用）[/b cyan]
+  [b]d[/b] Discover · [b]p[/b] Packs · [b]t[/b] Settings
+
+[b cyan]Discover — 发现与决策[/b cyan]
+  [b cyan]Enter[/b cyan]  查看详情（只读，生成 Issue Brief）
+  [b yellow]Space[/b yellow]  决策，三选一：
+          [b green]Start Work[/b green] 生成 Packet 并标记 continue
+          Defer  暂时搁置 · Discard  丢弃
+  [b]Tab[/b]    详情视图中在 Analysis / Source 两栏间切换并滚动
+  [b]u[/b]      刷新 / 更新机会队列
+
+[b cyan]Packs — 管理与打开[/b cyan]
+  [b cyan]Enter[/b cyan] 阅读 Packet · [b blue]o[/b blue] 用外部程序打开 · [b yellow]Space[/b yellow] 决策
+
+[b cyan]流向[/b cyan]
+  Discover 按 [b yellow]Space[/b yellow] → [b green]Start Work[/b green] 生成 Packet → 在 [b]p[/b] Packs 打开/管理 → 交给 Codex / Claude / 编辑器继续
+
+[b cyan]通用[/b cyan]
+  [b]Esc[/b] / [b]q[/b] 返回上一层 · [b]?[/b] 帮助 · [b]Ctrl+Q[/b] 退出
+
+[dim]按 Esc、? 或 q 关闭[/dim]"""
+
+
+class HelpScreen(ModalScreen):
+    DEFAULT_CSS = """
+    HelpScreen { align: center middle; background: $background 60%; }
+    HelpScreen #help-card {
+        width: 72;
+        max-width: 90%;
+        height: auto;
+        max-height: 90%;
+        padding: 1 2;
+        border: round $accent;
+        background: $surface;
+    }
+    """
+    BINDINGS = [
+        ("escape", "dismiss", "Close"),
+        ("question_mark", "dismiss", "Close"),
+        ("q", "dismiss", "Close"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        with Middle():
+            with Center():
+                with VerticalScroll(id="help-card"):
+                    yield Static(HELP_TEXT)
 
 
 class OsmindApp(App):
@@ -25,8 +77,8 @@ class OsmindApp(App):
     BINDINGS = [
         ("d", "switch_tab('discover')", "Discover"),
         ("p", "switch_tab('packs')", "Packs"),
-        ("r", "switch_tab('review')", "Review"),
         ("t", "switch_tab('settings')", "Settings"),
+        ("question_mark", "help", "Help"),
         ("escape", "leave_input", "Back"),
         ("ctrl+q", "quit", "Quit"),
     ]
@@ -42,13 +94,20 @@ class OsmindApp(App):
                 yield DiscoverScreen()
             with TabPane("Packs", id="packs"):
                 yield PacksScreen()
-            with TabPane("Review", id="review"):
-                yield ReviewScreen()
             with TabPane("Settings", id="settings"):
                 yield SettingsScreen()
         yield Footer()
 
+    def action_help(self) -> None:
+        if isinstance(self.focused, Input):
+            return
+        if isinstance(self.screen, HelpScreen):
+            return
+        self.push_screen(HelpScreen())
+
     def action_switch_tab(self, tab: str) -> None:
+        if tab not in {"discover", "packs", "settings"}:
+            return
         self.query_one(TabbedContent).active = tab
         self._focus_active_tab_after_refresh(tab)
 
@@ -61,8 +120,6 @@ class OsmindApp(App):
             self.query_one(IssueTable).focus()
         elif active_tab == "packs":
             self.query_one("#packs-table", DataTable).focus()
-        elif active_tab == "review":
-            self.query_one("#notes-table", DataTable).focus()
         else:
             self.set_focus(None)
 
@@ -121,8 +178,6 @@ class OsmindApp(App):
         try:
             if tab == "packs":
                 self.query_one(PacksScreen).action_reload()
-            elif tab == "review":
-                self.query_one(ReviewScreen).action_reload()
             elif tab == "settings":
                 self.query_one(SettingsScreen).action_reload()
             self._focus_active_tab(tab)
@@ -137,8 +192,6 @@ class OsmindApp(App):
             self.query_one(IssueTable).focus()
         elif tab == "packs":
             self.query_one("#packs-table", DataTable).focus()
-        elif tab == "review":
-            self.query_one("#notes-table", DataTable).focus()
         elif tab == "settings":
             self.query_one("#settings-health").focus()
 

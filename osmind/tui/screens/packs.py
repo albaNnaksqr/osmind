@@ -30,7 +30,6 @@ class PacksScreen(Vertical):
     BINDINGS = [
         ("enter", "view_pack", "Read Packet"),
         ("o", "open_pack", "Open"),
-        ("w", "start_work", "Start Work"),
         ("space", "decide", "Decide"),
         ("escape", "back_to_list", "Back"),
         ("q", "back_to_list", "Back"),
@@ -40,9 +39,9 @@ class PacksScreen(Vertical):
         with Vertical(id="packs-list-view"):
             yield Label("[bold]Contribution Packets[/bold]", markup=True)
             yield DataTable(id="packs-table", cursor_type="row")
-            yield Label("[dim]Enter: Read  w: Start Work  Space: Decide  o: Open[/dim]", markup=True)
+            yield Label("[dim]Enter: Read  Space: Decide  o: Open[/dim]", markup=True)
         with Vertical(id="packet-reader-view"):
-            yield Static("[dim]w: Start Work  o: Open  Esc: Back[/dim]", id="packet-reader-hint")
+            yield Static("[dim]o: Open  Esc: Back[/dim]", id="packet-reader-hint")
             with Horizontal(id="packet-reader-body"):
                 yield DataTable(id="packet-section-table", cursor_type="row")
                 yield Markdown("", id="packet-markdown")
@@ -195,7 +194,6 @@ class PacksScreen(Vertical):
     def _show_packet_section(self, index: int) -> None:
         markdown = packet_section_markdown(self._reader_markdown, index)
         viewer = self.query_one("#packet-markdown", Markdown)
-        viewer.source = markdown
         viewer.update(markdown)
 
     def _write_pack_decision(self, pack: dict, decision: str) -> Path:

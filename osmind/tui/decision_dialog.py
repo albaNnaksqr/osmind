@@ -7,6 +7,10 @@ from textual.widgets import DataTable, Static
 
 
 class DecisionDialog(ModalScreen[str | None]):
+    def __init__(self, include_start_work: bool = False):
+        super().__init__()
+        self._include_start_work = include_start_work
+
     DEFAULT_CSS = """
     DecisionDialog {
         align: center middle;
@@ -37,6 +41,8 @@ class DecisionDialog(ModalScreen[str | None]):
     def on_mount(self) -> None:
         table = self.query_one("#decision-options", DataTable)
         table.add_columns("Decision", "Effect")
+        if self._include_start_work:
+            table.add_row("Start Work", "Generate a Contribution Packet and start working", key="continue")
         table.add_row("Defer", "Hide until upstream or resources change", key="defer")
         table.add_row("Discard", "Hide unless you revisit discarded items", key="discard")
         table.cursor_coordinate = (0, 0)

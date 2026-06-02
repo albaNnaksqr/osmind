@@ -3,6 +3,12 @@ from __future__ import annotations
 from osmind.decision import format_decision_markdown
 from osmind.engine.issue_brief import IssueBrief
 from osmind.engine import issue_brief as issue_brief_module
+from osmind.engine.repo_grounding import (
+    GroundingReport,
+    render_repo_file_targets,
+    render_repo_first_steps,
+    render_repo_grounding,
+)
 
 try:
     from osmind.engine.issue_brief import render_agent_prompt
@@ -68,7 +74,12 @@ class PackGenerator:
         )
 
     @staticmethod
-    def from_issue(issue: GHIssue, resources: dict | None = None, brief: IssueBrief | None = None) -> LearningPack:
+    def from_issue(
+        issue: GHIssue,
+        resources: dict | None = None,
+        brief: IssueBrief | None = None,
+        grounding_report: GroundingReport | None = None,
+    ) -> LearningPack:
         source = SourceRef(
             source_type="issue",
             repo=issue.repo,
@@ -87,8 +98,9 @@ class PackGenerator:
                     PackSection("Issue Brief", _issue_brief_summary(brief)),
                     PackSection("Why It May Fit You", _brief_why_it_may_fit(brief, issue)),
                     PackSection("Risks And Missing Evidence", _issue_brief_risks(brief)),
-                    PackSection("First 30 Minutes", _numbered_list(brief.next_steps)),
-                    PackSection("Validation Path", _numbered_list(brief.agent_questions)),
+                    *(_repo_grounding_sections(grounding_report) if grounding_report else []),
+                    PackSection("First 30 Minutes", _grounded_first_steps(grounding_report, brief.next_steps)),
+                    PackSection("Validation Path", _grounded_validation_path(grounding_report, brief.agent_questions)),
                     PackSection("Agent Prompt", _issue_brief_agent_prompt(issue, brief)),
                 ]
             )
@@ -96,7 +108,8 @@ class PackGenerator:
             sections.extend(
                 [
                     PackSection("Why It May Fit You", _why_issue_may_fit(issue)),
-                    PackSection("First 10 Minutes", _issue_first_ten_minutes(issue)),
+                    *(_repo_grounding_sections(grounding_report) if grounding_report else []),
+                    PackSection("First 10 Minutes", _grounded_first_steps(grounding_report, _issue_first_ten_minute_items(issue))),
                     PackSection("Validation Path", _issue_validation_path(issue)),
                     PackSection("Agent Exploration Prompt", _issue_agent_prompt(issue)),
                 ]
@@ -104,7 +117,7 @@ class PackGenerator:
         sections.extend(
             [
                 PackSection("Continue Or Stop Criteria", _issue_continue_stop_criteria(issue)),
-                PackSection("Files And Symbols To Inspect", _issue_search_targets(issue)),
+                PackSection("Files And Symbols To Inspect", _grounded_file_targets(grounding_report, _issue_search_targets(issue))),
                 PackSection("Known Facts", _issue_known_context(issue)),
                 PackSection("Missing Context", _issue_missing_context(issue)),
                 PackSection("Reproduction Hypothesis", _issue_reproduction_hypothesis(issue)),
@@ -243,6 +256,35 @@ def _tagged_evidence(issue: GHIssue, brief: IssueBrief) -> list[str]:
 
 def _issue_brief_risks(brief: IssueBrief) -> str:
     return "\n".join(["### Risks", _plain_list(brief.risks)])
+
+
+def _repo_grounding_sections(report: GroundingReport | None) -> list[PackSection]:
+    if report is None:
+        return []
+    return [PackSection("Repo Grounding", render_repo_grounding(report))]
+
+
+def _grounded_first_steps(report: GroundingReport | None, fallback_steps: list[str]) -> str:
+    if report is None:
+        return _numbered_list(fallback_steps)
+    return render_repo_first_steps(report, fallback_steps)
+
+
+def _grounded_file_targets(report: GroundingReport | None, fallback: str) -> str:
+    if report is None:
+        return fallback
+    return render_repo_file_targets(report, fallback)
+
+
+def _grounded_validation_path(report: GroundingReport | None, fallback_questions: list[str]) -> str:
+    if report is None or not report.test_files:
+        return _numbered_list(fallback_questions)
+    lines = [
+        f"1. Start with `{report.test_files[0]}` as the likely smallest validation entry.",
+        "2. Add or adapt a failing regression around the issue's concrete input/output.",
+        "3. Only inspect broader response serialization after the parser-level check is clear.",
+    ]
+    return "\n".join(lines)
 
 
 def _issue_brief_agent_prompt(issue: GHIssue, brief: IssueBrief) -> str:
@@ -488,16 +530,18 @@ def _issue_continue_stop_criteria(issue: GHIssue) -> str:
 
 
 def _issue_first_ten_minutes(issue: GHIssue) -> str:
+    return _numbered_list(_issue_first_ten_minute_items(issue))
+
+
+def _issue_first_ten_minute_items(issue: GHIssue) -> list[str]:
     targets = _issue_search_terms(issue)
     first_target = targets[0] if targets else issue.title
-    return "\n".join(
-        [
-            "1. Reproduce or restate the report in one sentence.",
-            f"2. Search the repository for `{first_target}` and nearby module names.",
-            "3. Find the smallest file or test that could validate the behavior.",
-            "4. Decide continue/defer/discard before attempting implementation.",
-        ]
-    )
+    return [
+        "Reproduce or restate the report in one sentence.",
+        f"Search the repository for `{first_target}` and nearby module names.",
+        "Find the smallest file or test that could validate the behavior.",
+        "Decide continue/defer/discard before attempting implementation.",
+    ]
 
 
 def _issue_validation_path(issue: GHIssue) -> str:

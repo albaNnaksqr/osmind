@@ -1,5 +1,11 @@
 from __future__ import annotations
 import json
+from osmind.engine.grounding import (
+    RepoSignals,
+    apply_guardrails,
+    ground_issue,
+    grounding_prompt_block,
+)
 from osmind.engine.llm import LLMClient
 from osmind.github.models import GHIssue
 
@@ -33,14 +39,15 @@ class Ranker:
         self._skills = skills
         self._resources = resources or {}
 
-    def _score_issue(self, issue: GHIssue) -> dict:
+    def _score_issue(self, issue: GHIssue, signals: RepoSignals) -> dict:
         prompt = (
             f"User interests: {', '.join(self._interests)}\n"
             f"User skills: {', '.join(self._skills)}\n\n"
             f"User resources:\n{_format_resources(self._resources)}\n\n"
             f"Issue #{issue.number}: {issue.title}\n"
             f"Labels: {', '.join(issue.labels)}\n"
-            f"Body: {issue.body[:400]}"
+            f"Body: {issue.body[:400]}\n\n"
+            f"{grounding_prompt_block(signals)}"
         )
         raw = self._llm.chat(_SYSTEM, prompt, max_tokens=128)
         try:
@@ -64,14 +71,21 @@ class Ranker:
             }
 
     def score_one(self, issue: GHIssue) -> GHIssue:
-        """Score a single issue in-place and return it."""
-        result = self._score_issue(issue)
+        """Score a single issue in-place and return it.
+
+        The LLM scores the text with repo facts as context; deterministic
+        guardrails then clamp the result for the strongest negative signals
+        (assigned, linked/duplicate PR, non-actionable labels).
+        """
+        signals = ground_issue(issue)
+        result = apply_guardrails(self._score_issue(issue, signals), signals)
         issue.score = result["score"]
         issue.reason = result["reason"]
         issue.priority = result["priority"]
         issue.fit = result["fit"]
         issue.resource_fit = result["resource_fit"]
         issue.actionability = result["actionability"]
+        issue.grounding = list(signals.flags)
         return issue
 
     def rank(self, issues: list[GHIssue]) -> list[GHIssue]:

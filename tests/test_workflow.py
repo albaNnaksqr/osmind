@@ -57,6 +57,8 @@ Help me investigate issue #42.
     assert "Search for `tokenizer`" in summary
     assert "Files And Symbols To Inspect" in summary
     assert "Validation Path" in summary
+    assert "### Continue" not in summary
+    assert "[bold]Continue[/bold]" in summary
     assert "Stop if no validation path appears." in summary
     assert "Agent Exploration Prompt" in summary
 
@@ -134,3 +136,50 @@ decision: continue
     assert "请先对 Issue #42 进行结构化研读。" in summary
     assert "First 10 Minutes" not in summary
     assert "Open the packet and identify the first concrete read or reproduction step." not in summary
+
+
+def test_start_work_summary_formats_markdown_headings_for_tui():
+    from osmind.tui.workflow import format_start_work_from_packet
+
+    markdown = """---
+type: osmind-contribution-packet
+source_type: issue
+repo: o/r
+number: 42
+title: Tool call parser
+url: https://github.com/o/r/issues/42
+decision: continue
+---
+
+# Issue #42: Tool call parser
+
+## Repo Grounding
+
+### Scope
+- Repo: `o/r`
+
+### Highest-Signal Matches
+- `src/parser.py:10` matched `tool_calls`: value contains [nested] markers
+
+## First 30 Minutes
+
+1. Read `src/parser.py`.
+
+## Files And Symbols To Inspect
+
+- `src/parser.py`
+
+## Validation Path
+
+- Add a parser test.
+
+## Agent Prompt
+
+Investigate the parser.
+"""
+
+    summary = format_start_work_from_packet(markdown)
+
+    assert "### Scope" not in summary
+    assert "[bold]Scope[/bold]" in summary
+    assert "value contains \\[nested] markers" in summary

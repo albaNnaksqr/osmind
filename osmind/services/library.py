@@ -11,6 +11,7 @@ import yaml
 
 from osmind.cache.store import CacheStore
 from osmind.engine.issue_brief import IssueBrief
+from osmind.engine.repo_grounding import ground_issue_checkout
 from osmind.github.models import GHIssue, GHPR
 from osmind.packs.generator import PackGenerator
 from osmind.packs.models import VALID_PACK_DECISIONS
@@ -21,11 +22,18 @@ MAX_SLUG_LENGTH = 80
 
 
 class PackLibrary:
-    def __init__(self, notes_vault: Path, cache_path: Path, resources: dict | None = None):
+    def __init__(
+        self,
+        notes_vault: Path,
+        cache_path: Path,
+        resources: dict | None = None,
+        repo_paths: dict[str, Path | str] | None = None,
+    ):
         self.notes_vault = notes_vault
         self.cache = CacheStore(cache_path)
         self.generator = PackGenerator()
         self.resources = resources or {}
+        self.repo_paths = {repo: Path(path).expanduser() for repo, path in (repo_paths or {}).items()}
 
     def write_pr_pack(self, pr: GHPR) -> Path:
         pack = self.generator.from_pr(pr)
@@ -33,7 +41,15 @@ class PackLibrary:
         return self._write_pack(path, pr.repo, "pr", pr.number, pack)
 
     def write_issue_pack(self, issue: GHIssue, brief: IssueBrief | None = None) -> Path:
-        pack = self.generator.from_issue(issue, resources=self.resources, brief=brief)
+        grounding_report = None
+        if issue.repo in self.repo_paths:
+            grounding_report = ground_issue_checkout(issue, self.repo_paths[issue.repo])
+        pack = self.generator.from_issue(
+            issue,
+            resources=self.resources,
+            brief=brief,
+            grounding_report=grounding_report,
+        )
         path = self._existing_pack_path(issue.repo, "issue", issue.number) or self._issue_pack_path(issue)
         return self._write_pack(path, issue.repo, "issue", issue.number, pack)
 

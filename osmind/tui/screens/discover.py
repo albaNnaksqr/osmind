@@ -1,11 +1,12 @@
 from __future__ import annotations
 import asyncio
 import os
+import re
 from pathlib import Path
 from textual.app import ComposeResult
 from textual.css.query import NoMatches
 from textual.widgets import Label, LoadingIndicator, Select, Static
-from textual.containers import Vertical, Horizontal
+from textual.containers import Vertical, Horizontal, VerticalScroll
 from osmind.decision import format_decision_panel
 from osmind.logs import log_exception
 from osmind.packs.opener import open_path
@@ -18,11 +19,14 @@ from osmind.tui.widgets.issue_list import IssueTable
 from osmind.tui.workflow import format_start_work_from_packet
 
 
+DEFAULT_ISSUE_FETCH_LIMIT = 30
+
+
 class DiscoverScreen(Vertical):
     ACTION_FILTERS = [
         ("Active", "active"),
         ("Do now", "do_now"),
-        ("Review", "review"),
+        ("Inspect", "inspect"),
         ("Rec Defer", "rec_defer"),
         ("Skip", "skip"),
         ("Packeted", "packeted"),
@@ -32,6 +36,7 @@ class DiscoverScreen(Vertical):
         ("All", "all"),
     ]
     DEFAULT_CSS = """
+    DiscoverScreen #breadcrumb { height: 1; padding: 0 1; color: $text-muted; background: $panel; }
     DiscoverScreen #toolbar { height: 3; }
     DiscoverScreen #repo-select { width: 32; height: 3; }
     DiscoverScreen #action-filter { width: 18; height: 3; }
@@ -44,31 +49,40 @@ class DiscoverScreen(Vertical):
     DiscoverScreen #issue-detail-content { height: 1fr; }
     DiscoverScreen IssueTable { height: 1fr; }
     DiscoverScreen #issue-summary-panel { height: 4; padding: 0 1; }
-    DiscoverScreen #start-work-panel { height: 1fr; padding: 0 1; overflow-y: auto; }
+    DiscoverScreen #start-work-panel {
+        height: 1fr;
+        padding: 0 1;
+        border: round $panel;
+        overflow-y: auto;
+    }
+    DiscoverScreen #start-work-panel:focus { border: round $accent; }
     DiscoverScreen #issue-analysis-panel {
         width: 38%;
         min-width: 32;
         height: 1fr;
         padding: 0 1;
-        border-right: solid $panel;
+        border: round $panel;
         overflow-y: auto;
     }
     DiscoverScreen #issue-source-panel {
         width: 1fr;
         height: 1fr;
         padding: 0 1;
+        border: round $panel;
         overflow-y: auto;
+    }
+    DiscoverScreen #issue-analysis-panel:focus,
+    DiscoverScreen #issue-source-panel:focus {
+        border: round $accent;
     }
     """
     BINDINGS = [
-        ("u", "update", "Update"),
+        ("enter", "view_issue", "View"),
+        ("space", "decide", "Decide"),
         ("tab", "toggle_detail_focus", "Switch Pane"),
-        ("enter", "view_issue", "Detail"),
+        ("u", "update", "Update"),
         ("escape", "back_to_list", "Back"),
         ("q", "back_to_list", "Back"),
-        ("space", "decide", "Decide"),
-        ("w", "start_work", "Start Work"),
-        ("o", "open_pack", "Open"),
     ]
 
     def __init__(self):
@@ -83,28 +97,36 @@ class DiscoverScreen(Vertical):
         watching = self.app.config.watching
         options = [(r["repo"], r["repo"]) for r in watching]
         initial = watching[0]["repo"] if watching else Select.BLANK
+        yield Static("Discover", id="breadcrumb")
         with Horizontal(id="toolbar"):
             yield Select(options, id="repo-select", value=initial)
             yield Select(self.ACTION_FILTERS, id="action-filter", value="active")
-            yield Label("  Enter: Detail  w: Start Work  Space: Decide  o: Open  u: Update", id="hint")
+            yield Label("  Ready", id="hint")
             yield Static("Filter: Active | No opportunities loaded", id="freshness-status")
         yield LoadingIndicator(id="loader")
         with Vertical(id="issue-list-view"):
             yield IssueTable(id="issue-table")
-            yield Static("[dim]Enter 查看详情。w 开始处理。Space 决策。o 打开 Packet。[/dim]", id="issue-summary-panel")
-        with Vertical(id="issue-detail-view"):
             yield Static(
-                "[dim]Tab: Pane  w: Start Work  Space: Decide  o: Open  Esc: Back[/dim]",
-                id="issue-detail-hint",
+                "[dim]查看[/dim]  [b cyan]Enter[/b cyan] 详情     "
+                "[dim]决策[/dim]  [b yellow]Space[/b yellow] → [b green]Start Work[/b green] / Defer / Discard     "
+                "[dim]?[/dim] 帮助   [dim](生成的 Packet 在 [b]p[/b] Packs 标签打开)[/dim]",
+                id="issue-summary-panel",
             )
+        with Vertical(id="issue-detail-view"):
             with Horizontal(id="issue-detail-content"):
-                yield Static("", id="issue-analysis-panel")
-                yield Static("", id="issue-source-panel")
+                with VerticalScroll(id="issue-analysis-panel") as analysis_scroll:
+                    analysis_scroll.border_title = "Analysis"
+                    yield Static("", id="issue-analysis-content")
+                with VerticalScroll(id="issue-source-panel") as source_scroll:
+                    source_scroll.border_title = "Source"
+                    yield Static("", id="issue-source-content", markup=False)
         with Vertical(id="start-work-view"):
-            yield Static("[dim]o: Open  Esc: Back[/dim]", id="start-work-hint")
-            yield Static("", id="start-work-panel")
+            with VerticalScroll(id="start-work-panel") as start_work_scroll:
+                start_work_scroll.border_title = "Start Work"
+                yield Static("", id="start-work-content")
 
     def on_mount(self) -> None:
+        self._set_breadcrumb(self._selected_repo(notify=False) or "")
         self.call_after_refresh(self._load_cached_queue_if_available)
 
     def _load_cached_queue_if_available(self) -> None:
@@ -212,7 +234,7 @@ class DiscoverScreen(Vertical):
         except Exception as e:
             log_path = log_exception(self.app.config.notes_vault, f"Failed to update issues for {repo}")
             self.query_one("#hint", Label).update("  Update failed — press u to retry")
-            self.notify(f"{e} (log: {log_path})", severity="error")
+            self.notify(_format_github_fetch_error(repo, e, log_path), severity="error")
             self.query_one("#loader", LoadingIndicator).display = False
 
     def _cached_issues_for_repo(self, repo: str):
@@ -224,7 +246,7 @@ class DiscoverScreen(Vertical):
     def _show_cached_issues(self, cached_issues) -> None:
         self._show_issues(cached_issues)
         self.query_one("#hint", Label).update(
-            f"  {len(cached_issues)} cached opportunities  Enter: Detail  w: Start Work  Space: Decide  o: Open  u: Update"
+            f"  {len(cached_issues)} cached opportunities"
         )
         self.query_one("#loader", LoadingIndicator).display = False
 
@@ -294,7 +316,7 @@ class DiscoverScreen(Vertical):
 
         expected_action = {
             "do_now": "Do now",
-            "review": "Review",
+            "inspect": "Inspect",
             "rec_defer": "Defer",
             "skip": "Skip",
         }.get(self._action_filter)
@@ -390,16 +412,17 @@ class DiscoverScreen(Vertical):
     async def _fetch_from_github_and_score(self, repo: str) -> None:
         self._set_busy(f"  Updating {repo} from GitHub…")
         token = os.environ.get("GITHUB_TOKEN", "")
+        issue_limit = _issue_limit_for_repo(self.app.config.watching, repo)
         issues = await asyncio.to_thread(
             lambda: __import__("osmind.github.client", fromlist=["GitHubClient"])
             .GitHubClient(token=token)
-            .get_issues(repo, limit=30, include_comments=False)
+            .get_issues(repo, limit=issue_limit, include_comments=False)
         )
         cache = self._cache()
         for issue in issues:
             cache.upsert_issue(issue)
         self._show_issues(issues)
-        self.query_one("#hint", Label).update(f"  {len(issues)} opportunities • ranking…  Enter: Detail")
+        self.query_one("#hint", Label).update(f"  {len(issues)} opportunities • ranking…")
         self.query_one("#loader", LoadingIndicator).display = False
         await self._score_progressively(issues, repo, token)
 
@@ -445,7 +468,7 @@ class DiscoverScreen(Vertical):
 
             hint = self.query_one("#hint", Label)
             hint.update(
-                "  Enter: Detail  w: Start Work  Space: Decide  o: Open  u: Update"
+                "  Enter: Detail  Space: Decide / Start Work  u: Update"
             )
             self.query_one("#loader", LoadingIndicator).display = False
             if failures:
@@ -477,14 +500,13 @@ class DiscoverScreen(Vertical):
         self._issue_detail_request_id += 1
         request_id = self._issue_detail_request_id
 
-        analysis = self.query_one("#issue-analysis-panel", Static)
-        source = self.query_one("#issue-source-panel", Static)
+        analysis = self.query_one("#issue-analysis-content", Static)
+        source = self.query_one("#issue-source-content", Static)
         self._show_detail()
+        self._set_breadcrumb(issue.repo, f"Issue #{issue.number}")
         analysis.update(_format_issue_analysis(issue, self.app.config.resources))
         source.update(_format_issue_source(issue, "正在生成 Issue Brief…"))
-        analysis.can_focus = True
-        source.can_focus = True
-        source.focus()
+        self.query_one("#issue-source-panel", VerticalScroll).focus()
 
         loader = self.query_one("#loader", LoadingIndicator)
         loader.display = True
@@ -519,6 +541,14 @@ class DiscoverScreen(Vertical):
             self._show_list()
             self.query_one(IssueTable).focus()
 
+    def _set_breadcrumb(self, *parts: str) -> None:
+        try:
+            crumb = self.query_one("#breadcrumb", Static)
+        except NoMatches:
+            return
+        segments = ["Discover", *[p for p in parts if p]]
+        crumb.update("  " + "  ›  ".join(segments))
+
     def _show_detail(self) -> None:
         self.query_one("#issue-list-view").display = False
         self.query_one("#issue-detail-view").display = True
@@ -526,29 +556,30 @@ class DiscoverScreen(Vertical):
         self.query_one(IssueTable).can_focus = False
         self.query_one("#repo-select", Select).can_focus = False
         self.query_one("#action-filter", Select).can_focus = False
-        self.query_one("#issue-analysis-panel", Static).can_focus = True
-        self.query_one("#issue-source-panel", Static).can_focus = True
+        self.query_one("#issue-analysis-panel", VerticalScroll).can_focus = True
+        self.query_one("#issue-source-panel", VerticalScroll).can_focus = True
         self.query_one("#hint", Label).update(
-            "  Tab: Pane  w: Start Work  Space: Decide  o: Open  Esc: Back"
+            "  Detail — Tab 在 Analysis / Source 间切换并滚动"
         )
 
     def _show_list(self) -> None:
+        self._set_breadcrumb(self._selected_repo(notify=False) or "")
         self.query_one("#issue-list-view").display = True
         self.query_one("#issue-detail-view").display = False
         self.query_one("#start-work-view").display = False
         self.query_one(IssueTable).can_focus = True
         self.query_one("#repo-select", Select).can_focus = True
         self.query_one("#action-filter", Select).can_focus = True
-        self.query_one("#issue-analysis-panel", Static).can_focus = False
-        self.query_one("#issue-source-panel", Static).can_focus = False
-        self.query_one("#start-work-panel", Static).can_focus = False
+        self.query_one("#issue-analysis-panel", VerticalScroll).can_focus = False
+        self.query_one("#issue-source-panel", VerticalScroll).can_focus = False
+        self.query_one("#start-work-panel", VerticalScroll).can_focus = False
 
     def action_toggle_detail_focus(self) -> None:
         detail_view = self.query_one("#issue-detail-view")
         if not detail_view.display:
             return
-        analysis = self.query_one("#issue-analysis-panel", Static)
-        source = self.query_one("#issue-source-panel", Static)
+        analysis = self.query_one("#issue-analysis-panel", VerticalScroll)
+        source = self.query_one("#issue-source-panel", VerticalScroll)
         if self.app.focused is source:
             analysis.focus()
         else:
@@ -558,7 +589,12 @@ class DiscoverScreen(Vertical):
         from osmind.services.library import PackLibrary
 
         cache_path = self.app.config.notes_vault / "osmind" / ".cache" / "osmind.db"
-        return PackLibrary(self.app.config.notes_vault, cache_path, resources=self.app.config.resources)
+        return PackLibrary(
+            self.app.config.notes_vault,
+            cache_path,
+            resources=self.app.config.resources,
+            repo_paths=_repo_paths_from_watching(self.app.config.watching),
+        )
 
     def _cache(self):
         from osmind.cache.store import CacheStore
@@ -651,10 +687,18 @@ class DiscoverScreen(Vertical):
             if pack_was_missing:
                 self._update_freshness_status()
             markdown = path.read_text(encoding="utf-8")
-            self.query_one("#start-work-panel", Static).update(
+            self.query_one("#start-work-content", Static).update(
                 format_start_work_from_packet(markdown, self.app.config.resources)
             )
             self._show_start_work()
+            self._set_breadcrumb(issue.repo, f"Issue #{issue.number}", "Start Work")
+            if pack_was_missing:
+                self.notify(
+                    f"✓ Packet 已生成并标记 continue — 按 p 在 Packs 标签查看",
+                    timeout=5,
+                )
+            else:
+                self.notify("✓ 已进入 Start Work — 按 p 可在 Packs 标签管理", timeout=4)
         except Exception as e:
             log_path = log_exception(
                 self.app.config.notes_vault,
@@ -669,10 +713,10 @@ class DiscoverScreen(Vertical):
         self.query_one(IssueTable).can_focus = False
         self.query_one("#repo-select", Select).can_focus = False
         self.query_one("#action-filter", Select).can_focus = False
-        panel = self.query_one("#start-work-panel", Static)
+        panel = self.query_one("#start-work-panel", VerticalScroll)
         panel.can_focus = True
         panel.focus()
-        self.query_one("#hint", Label).update("  o: Open  Esc: Back")
+        self.query_one("#hint", Label).update("  Start Work — packet 已就绪，按 p 到 Packs 打开")
 
     async def _set_issue_decision(self, issue, decision: str) -> Path:
         path = self._pack_path_for_issue(issue)
@@ -749,11 +793,14 @@ class DiscoverScreen(Vertical):
             self.notify("先选中一个 issue", severity="warning")
             return
         async def handle_decision(decision: str | None) -> None:
+            if decision == "continue":
+                await self.action_start_work()
+                return
             if decision not in {"defer", "discard"}:
                 return
             await self._mark_issue_decision(issue, str(decision))
 
-        self.app.push_screen(DecisionDialog(), handle_decision)
+        self.app.push_screen(DecisionDialog(include_start_work=True), handle_decision)
 
     async def _mark_issue_decision(self, issue, decision: str) -> None:
         if decision not in {"defer", "discard"}:
@@ -822,7 +869,6 @@ class DiscoverScreen(Vertical):
 def _format_issue_analysis(issue, resources: dict | None = None) -> str:
     criteria = _issue_continue_stop_criteria(issue)
     return (
-        "[bold]Analysis[/bold]\n\n"
         f"{format_decision_panel(issue, resources)}\n\n"
         f"[bold]继续/放弃判断[/bold]\n{criteria}"
     )
@@ -831,21 +877,75 @@ def _format_issue_analysis(issue, resources: dict | None = None) -> str:
 def _format_issue_source(issue, brief_markdown: str) -> str:
     labels = ", ".join(issue.labels) or "none"
     comments = "\n".join(
-        f"- {comment.author}: {comment.body.strip()}"
+        f"- {comment.author}: {_plain_markdown_for_source(comment.body).strip()}"
         for comment in issue.comments[:5]
     ) or "- No cached comments."
     return (
-        "[bold]Source[/bold]\n\n"
-        f"[bold]Issue #{issue.number}: {issue.title}[/bold]\n"
-        f"[dim]{issue.repo} | labels: {labels} | {issue.url}[/dim]\n\n"
-        f"{brief_markdown.rstrip()}\n\n"
-        f"[bold]Original Issue[/bold]\n{(issue.body or '(empty)').strip()}\n\n"
-        f"[bold]Comments[/bold]\n{comments}"
+        f"Issue #{issue.number}: {issue.title}\n"
+        f"{issue.repo} | labels: {labels} | {issue.url}\n\n"
+        f"{_plain_markdown_for_source(brief_markdown).rstrip()}\n\n"
+        f"Original Issue\n{_plain_markdown_for_source(issue.body or '(empty)').strip()}\n\n"
+        f"Comments\n{comments}"
     )
 
 
 def _format_issue_detail(issue, brief_markdown: str, resources: dict | None = None) -> str:
     return f"{_format_issue_analysis(issue, resources)}\n\n{_format_issue_source(issue, brief_markdown)}"
+
+
+def _format_github_fetch_error(repo: str, error: Exception, log_path: Path) -> str:
+    text = f"{type(error).__name__}: {error}"
+    lower = text.lower()
+    if any(token in lower for token in ("ssl", "ssleoferror", "connection", "timeout", "max retries")):
+        return (
+            f"GitHub 网络/SSL 连接失败: {repo}。这通常不是 token 问题；"
+            f"请检查代理/VPN/网络后重试。（log: {log_path}）"
+        )
+    if any(token in lower for token in ("badcredentials", "401", "requires authentication", "rate limit")):
+        return f"GitHub 认证或限流失败: {repo}。请检查 GITHUB_TOKEN。（log: {log_path}）"
+    return f"{error} (log: {log_path})"
+
+
+def _plain_markdown_for_source(markdown: str) -> str:
+    lines: list[str] = []
+    in_code_block = False
+    for raw_line in str(markdown or "").splitlines():
+        stripped = raw_line.strip()
+        if stripped.startswith("```"):
+            in_code_block = not in_code_block
+            lines.append(raw_line)
+            continue
+        if not in_code_block:
+            heading = re.match(r"^\s*#{1,6}\s+(?P<title>.+?)\s*$", raw_line)
+            if heading:
+                if lines and lines[-1] != "":
+                    lines.append("")
+                lines.append(heading.group("title").strip())
+                continue
+        lines.append(raw_line)
+    return "\n".join(lines).strip()
+
+
+def _repo_paths_from_watching(watching: list[dict]) -> dict[str, Path]:
+    repo_paths: dict[str, Path] = {}
+    for entry in watching:
+        repo = str(entry.get("repo") or "").strip()
+        path = entry.get("path") or entry.get("local_path") or entry.get("checkout_path")
+        if repo and path:
+            repo_paths[repo] = Path(str(path)).expanduser()
+    return repo_paths
+
+
+def _issue_limit_for_repo(watching: list[dict], repo: str) -> int:
+    for entry in watching:
+        if str(entry.get("repo") or "").strip() != repo:
+            continue
+        try:
+            limit = int(entry.get("issue_limit", DEFAULT_ISSUE_FETCH_LIMIT))
+        except (TypeError, ValueError):
+            return DEFAULT_ISSUE_FETCH_LIMIT
+        return limit if limit > 0 else DEFAULT_ISSUE_FETCH_LIMIT
+    return DEFAULT_ISSUE_FETCH_LIMIT
 
 
 def _issue_continue_stop_criteria(issue) -> str:

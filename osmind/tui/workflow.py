@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from osmind.packs.renderer import parse_pack_frontmatter
+from textual.markup import escape
 
 
 START_WORK_SECTIONS = [
@@ -50,7 +51,7 @@ def format_start_work_from_packet(markdown: str, resources: dict | None = None) 
                 break
         if not body:
             body = _missing_section_text(section)
-        lines.extend(["", f"[bold]{section}[/bold]", body])
+        lines.extend(["", f"[bold]{section}[/bold]", _format_section_body(body)])
 
     return "\n".join(lines).rstrip()
 
@@ -62,13 +63,20 @@ def _workflow_sections_for_packet(frontmatter: dict[str, object], sections: dict
         and any(title in sections for title in ("Issue Brief", "First 30 Minutes", "Agent Prompt"))
     )
     if has_brief_sections:
-        return [
+        workflow = [
             ("First 30 Minutes", ("First 30 Minutes", "First 10 Minutes")),
-            ("Files And Symbols To Inspect", ("Files And Symbols To Inspect",)),
-            ("Validation Path", ("Validation Path",)),
-            ("Continue Or Stop Criteria", ("Continue Or Stop Criteria",)),
-            ("Agent Prompt", ("Agent Prompt", "Agent Exploration Prompt")),
         ]
+        if "Repo Grounding" in sections:
+            workflow.append(("Repo Grounding", ("Repo Grounding",)))
+        workflow.extend(
+            [
+                ("Files And Symbols To Inspect", ("Files And Symbols To Inspect",)),
+                ("Validation Path", ("Validation Path",)),
+                ("Continue Or Stop Criteria", ("Continue Or Stop Criteria",)),
+                ("Agent Prompt", ("Agent Prompt", "Agent Exploration Prompt")),
+            ]
+        )
+        return workflow
     return START_WORK_SECTIONS
 
 
@@ -86,6 +94,26 @@ def _format_resources(resources: dict) -> str:
     if not resources:
         return "unspecified"
     return ", ".join(f"{key}: {value}" for key, value in resources.items())
+
+
+def _format_section_body(body: str) -> str:
+    formatted: list[str] = []
+    in_code_block = False
+    for raw_line in body.splitlines():
+        stripped = raw_line.strip()
+        if stripped.startswith("```"):
+            in_code_block = not in_code_block
+            formatted.append(escape(raw_line))
+            continue
+        if not in_code_block:
+            heading = re.match(r"^#{3,6}\s+(?P<title>.+?)\s*$", stripped)
+            if heading:
+                if formatted and formatted[-1] != "":
+                    formatted.append("")
+                formatted.append(f"[bold]{escape(heading.group('title'))}[/bold]")
+                continue
+        formatted.append(escape(raw_line))
+    return "\n".join(formatted).strip()
 
 
 def _missing_section_text(section: str) -> str:

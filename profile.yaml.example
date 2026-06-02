@@ -15,7 +15,10 @@ resources:
 
 watching:
   - repo: THUDM/slime
+    path: ~/workspace/slime        # optional local checkout for repo-grounded packets
+    issue_limit: 100               # optional; defaults to 30
   - repo: sgl-project/sglang
+    path: ~/workspace/sglang
 
 output_dir: ~/workspace/osmind-packets   # where osmind writes packets, cache, and logs
 # Legacy configs can still use notes_vault instead of output_dir.

@@ -31,7 +31,7 @@ def recommended_action(issue: GHIssue) -> str:
     if priority == "high" or score >= 0.7:
         return "Do now"
     if priority == "medium" or score >= 0.4:
-        return "Review"
+        return "Inspect"
     return "--"
 
 
@@ -55,7 +55,7 @@ def action_reason(issue: GHIssue) -> str:
             return "strong fit"
         return "high score"
     if priority == "medium" or score >= 0.4:
-        return "worth review"
+        return "needs inspection"
     if priority == "low" or (0 < score < 0.4):
         return "low priority"
     return "not ranked yet"
@@ -75,7 +75,7 @@ def action_why(issue: GHIssue, *, limit: int = 96) -> str:
 def next_step_for_action(action: str) -> str:
     if action == "Do now":
         return "Generate a packet, then inspect the suggested code path before editing."
-    if action == "Review":
+    if action == "Inspect":
         return "Open details and generate a packet only if the validation path is clear."
     if action == "Defer":
         return "Defer until the required environment is available."
@@ -88,7 +88,7 @@ def action_from_score(score: float) -> str:
     if score >= 0.7:
         return "Do now"
     if score >= 0.4:
-        return "Review"
+        return "Inspect"
     if score > 0:
         return "Skip"
     return "--"
@@ -161,6 +161,10 @@ def _decision_evidence(issue: GHIssue) -> list[str]:
         evidence.append(f"LLM: {reason}")
     else:
         evidence.append("LLM: no generated recommendation reason yet.")
+
+    grounding = getattr(issue, "grounding", []) or []
+    for flag in grounding:
+        evidence.append(f"Repo: {flag}")
 
     labels = ", ".join(getattr(issue, "labels", []) or [])
     if labels:
