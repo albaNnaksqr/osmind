@@ -20,14 +20,18 @@ watching:
   - repo: sgl-project/sglang
     path: ~/workspace/sglang
 
-output_dir: ~/workspace/osmind-packets   # where osmind writes packets, cache, and logs
+output_dir: ~/workspace/osmind-packets   # where osmind keeps its SQLite cache
 # Legacy configs can still use notes_vault instead of output_dir.
 
+vault: ~/workspace/Note   # optional Obsidian vault root; digests and decision-log mirrors land in Sources/Issue_Radar/
+
+# Optional; only used by the legacy TUI.
 llm:
   base_url: http://localhost:30000/v1  # SGLang local, or https://api.openai.com/v1
   model: Qwen3.5-27B
   api_key: sk-your-key-here
 
+# Optional; only used by the legacy TUI.
 external_agents:
   claude_code: claude
   codex: codex

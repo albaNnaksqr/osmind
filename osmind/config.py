@@ -29,9 +29,10 @@ class Config:
     resources: dict
     watching: list[dict]
     notes_vault: Path
-    llm: LLMConfig
-    external_agents: AgentConfig
+    llm: LLMConfig | None = None
+    external_agents: AgentConfig | None = None
     output_dir: Path | None = None
+    vault: Path | None = None  # Obsidian vault root for digests and decision-log mirrors
 
     def __post_init__(self) -> None:
         if self.output_dir is None:
@@ -40,30 +41,42 @@ class Config:
     @classmethod
     def from_file(cls, path: Path) -> "Config":
         data = yaml.safe_load(path.read_text())
-        for field in ("interests", "skills", "watching", "llm", "external_agents"):
+        for field in ("interests", "skills", "watching"):
             if field not in data:
                 raise ConfigError(f"Missing required field: {field}")
         output_dir_raw = data.get("output_dir") or data.get("notes_vault")
         if not output_dir_raw:
             raise ConfigError("Missing required field: output_dir")
         output_dir = Path(output_dir_raw).expanduser()
-        llm = data["llm"]
-        agents = data["external_agents"]
+        llm_data = data.get("llm")
+        llm = (
+            LLMConfig(
+                base_url=llm_data["base_url"],
+                model=llm_data["model"],
+                api_key=llm_data.get("api_key", ""),
+                enable_thinking=llm_data.get("enable_thinking", False),
+            )
+            if llm_data
+            else None
+        )
+        agents_data = data.get("external_agents")
+        agents = (
+            AgentConfig(
+                claude_code=agents_data.get("claude_code", "claude"),
+                codex=agents_data.get("codex", "codex"),
+            )
+            if agents_data
+            else None
+        )
+        vault_raw = data.get("vault")
         return cls(
             interests=data["interests"],
             skills=data["skills"],
             resources=data.get("resources", {}),
             watching=data["watching"],
             notes_vault=output_dir,
-            llm=LLMConfig(
-                base_url=llm["base_url"],
-                model=llm["model"],
-                api_key=llm.get("api_key", ""),
-                enable_thinking=llm.get("enable_thinking", False),
-            ),
-            external_agents=AgentConfig(
-                claude_code=agents.get("claude_code", "claude"),
-                codex=agents.get("codex", "codex"),
-            ),
+            llm=llm,
+            external_agents=agents,
             output_dir=output_dir,
+            vault=Path(vault_raw).expanduser() if vault_raw else None,
         )

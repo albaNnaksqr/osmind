@@ -58,6 +58,24 @@ class CacheStore:
             self._create_packs_table()
             self._migrate_packs_schema()
             self._recover_interrupted_pack_migration()
+            decisions_existed = self._table_exists("decisions")
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS decisions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    repo TEXT NOT NULL,
+                    source_type TEXT NOT NULL DEFAULT 'issue',
+                    number INTEGER NOT NULL,
+                    decision TEXT NOT NULL,
+                    reason TEXT NOT NULL DEFAULT '',
+                    resources_json TEXT NOT NULL DEFAULT '',
+                    content_hash TEXT NOT NULL DEFAULT '',
+                    decided_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            if not decisions_existed:
+                self._seed_decisions_from_packs()
             self._conn.commit()
         except Exception:
             self._conn.rollback()
@@ -187,6 +205,122 @@ class CacheStore:
                 ),
             )
 
+    def _seed_decisions_from_packs(self) -> None:
+        if not self._table_exists("packs"):
+            return
+        rows = self._conn.execute(
+            """
+            SELECT
+                p.repo, p.source_type, p.number, p.decision, p.generated_at,
+                COALESCE(g.content_hash, '') AS content_hash
+            FROM packs p
+            LEFT JOIN github_items g
+                ON g.repo = p.repo AND g.source_type = p.source_type AND g.number = p.number
+            WHERE p.decision IN ('continue', 'defer', 'discard')
+            ORDER BY p.version ASC
+            """
+        ).fetchall()
+        for row in rows:
+            self._conn.execute(
+                """
+                INSERT INTO decisions
+                    (repo, source_type, number, decision, reason, resources_json, content_hash, decided_at)
+                VALUES (?, ?, ?, ?, 'migrated from contribution packet', '', ?, ?)
+                """,
+                (
+                    row["repo"],
+                    row["source_type"],
+                    row["number"],
+                    row["decision"],
+                    row["content_hash"],
+                    row["generated_at"],
+                ),
+            )
+
+    def record_decision(
+        self,
+        repo: str,
+        source_type: str,
+        number: int,
+        decision: str,
+        reason: str,
+        resources: dict | None = None,
+    ) -> dict[str, Any]:
+        item = self._conn.execute(
+            "SELECT content_hash FROM github_items WHERE repo = ? AND source_type = ? AND number = ?",
+            (repo, source_type, number),
+        ).fetchone()
+        content_hash = item["content_hash"] if item is not None else ""
+        resources_json = json.dumps(resources, sort_keys=True, ensure_ascii=False) if resources is not None else ""
+        try:
+            cursor = self._conn.execute(
+                """
+                INSERT INTO decisions (repo, source_type, number, decision, reason, resources_json, content_hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (repo, source_type, number, decision, reason, resources_json, content_hash),
+            )
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
+        row = self._conn.execute("SELECT * FROM decisions WHERE id = ?", (cursor.lastrowid,)).fetchone()
+        return dict(row)
+
+    def latest_decisions(self, repo: str, source_type: str = "issue") -> dict[int, dict[str, Any]]:
+        rows = self._conn.execute(
+            """
+            SELECT d.*
+            FROM decisions d
+            JOIN (
+                SELECT MAX(id) AS max_id
+                FROM decisions
+                WHERE repo = ? AND source_type = ?
+                GROUP BY number
+            ) latest ON d.id = latest.max_id
+            """,
+            (repo, source_type),
+        ).fetchall()
+        return {int(row["number"]): dict(row) for row in rows}
+
+    def decision_log(self, repo: str, source_type: str, number: int) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            """
+            SELECT * FROM decisions
+            WHERE repo = ? AND source_type = ? AND number = ?
+            ORDER BY id ASC
+            """,
+            (repo, source_type, number),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_item(self, repo: str, source_type: str, number: int) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            """
+            SELECT
+                repo, source_type, number, title, body, body_hash, content_hash, state, url,
+                updated_at, fetched_at, labels_json, comments_json
+            FROM github_items
+            WHERE repo = ? AND source_type = ? AND number = ?
+            """,
+            (repo, source_type, number),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_item_rows(self, repo: str, source_type: str = "issue") -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            """
+            SELECT
+                repo, source_type, number, title, state, url, updated_at, fetched_at,
+                labels_json, content_hash
+            FROM github_items
+            WHERE repo = ? AND source_type = ?
+            ORDER BY updated_at DESC, number DESC
+            """,
+            (repo, source_type),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def _pack_columns(self, table_name: str) -> set[str]:
         rows = self._conn.execute(f"PRAGMA table_info({table_name})").fetchall()
         return {row["name"] for row in rows}
@@ -259,21 +393,7 @@ class CacheStore:
         )
 
     def upsert_issue(self, issue: GHIssue) -> None:
-        labels_json = json.dumps(issue.labels, ensure_ascii=False)
-        comments_json = json.dumps(
-            [
-                {
-                    "author": comment.author,
-                    "body": comment.body,
-                    "url": comment.url,
-                    "created_at": comment.created_at,
-                }
-                for comment in issue.comments
-            ],
-            ensure_ascii=False,
-        )
-        body_hash = _hash_text(issue.body)
-        content_hash = _hash_text(f"{labels_json}\n{comments_json}")
+        labels_json, comments_json, body_hash, content_hash = issue_content_signature(issue)
         try:
             self._conn.execute(
                 """
@@ -541,6 +661,25 @@ class CacheStore:
 
 def _hash_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def issue_content_signature(issue: GHIssue) -> tuple[str, str, str, str]:
+    labels_json = json.dumps(issue.labels, ensure_ascii=False)
+    comments_json = json.dumps(
+        [
+            {
+                "author": comment.author,
+                "body": comment.body,
+                "url": comment.url,
+                "created_at": comment.created_at,
+            }
+            for comment in issue.comments
+        ],
+        ensure_ascii=False,
+    )
+    body_hash = _hash_text(issue.body)
+    content_hash = _hash_text(f"{labels_json}\n{comments_json}")
+    return labels_json, comments_json, body_hash, content_hash
 
 
 def _issue_from_row(row: sqlite3.Row) -> GHIssue:
