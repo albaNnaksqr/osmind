@@ -97,6 +97,44 @@ def test_report_writes_ranked_recommendations(tmp_path, store, monkeypatch):
     assert Path(result["path"]).parent.name == "reports"
 
 
+def test_report_renders_skipped_summary(tmp_path, store, monkeypatch):
+    config = make_config(tmp_path)
+    service = service_with(
+        store, config,
+        [make_issue(1, title="Doable"), make_issue(2, title="Needs H20"), make_issue(3, title="Taken")],
+    )
+
+    fake_reco = {
+        "recommendations": [
+            {"repo": "sgl-project/sglang", "number": 1, "priority": "high", "reason": "r", "serendipity": False},
+        ],
+        "skipped": [
+            {"repo": "sgl-project/sglang", "number": 2, "category": "resource"},
+            {"repo": "sgl-project/sglang", "number": 3, "category": "occupied"},
+        ],
+    }
+    monkeypatch.setattr("osmind.services.report.recommend", lambda llm, profile, candidates: _normalized(fake_reco, candidates))
+
+    result = run_report(service, notify=False)
+    text = Path(result["path"]).read_text(encoding="utf-8")
+    assert "## 已跳过（2）" in text
+    assert "需要你没有的硬件/资源（1）: sgl-project/sglang#2" in text
+    assert "已有人在做（1）: sgl-project/sglang#3" in text
+    # skipped items must NOT get full recommendation cards
+    assert "### " in text and "Needs H20" not in text.split("## 已跳过")[0]
+
+
+def test_balanced_candidates_round_robins_repos():
+    from osmind.services.report import _balanced_candidates
+
+    items = [{"repo": "a/x", "number": n, "updated_at": f"2026-06-{n:02d}"} for n in range(1, 21)]
+    items += [{"repo": "b/y", "number": n, "updated_at": f"2026-06-{n:02d}"} for n in (1, 2, 3)]
+    picked = _balanced_candidates(items, cap=10)
+    repos = {p["repo"] for p in picked}
+    assert repos == {"a/x", "b/y"}  # quiet repo not crowded out
+    assert sum(1 for p in picked if p["repo"] == "b/y") == 3  # all of the quiet repo's items present
+
+
 def test_report_degrades_on_llm_failure(tmp_path, store, monkeypatch):
     from osmind.llm import LLMError
 

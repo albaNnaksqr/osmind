@@ -51,9 +51,7 @@ def run_report(service: RadarService, limit: int = 30, notify: bool = True) -> d
 
 
 def _gather_candidates(service: RadarService) -> list[dict]:
-    items = service.queue("active")
-    items.sort(key=lambda i: i["updated_at"], reverse=True)
-    items = items[:MAX_CANDIDATES]
+    items = _balanced_candidates(service.queue("active"), MAX_CANDIDATES)
     candidates: list[dict] = []
     client = service._client
     for item in items:
@@ -74,6 +72,26 @@ def _gather_candidates(service: RadarService) -> list[dict]:
             }
         )
     return candidates
+
+
+def _balanced_candidates(items: list[dict], cap: int) -> list[dict]:
+    """Round-robin across repos so a busy repo can't crowd out a quiet one."""
+    by_repo: dict[str, list[dict]] = {}
+    for item in items:
+        by_repo.setdefault(item["repo"], []).append(item)
+    for repo_items in by_repo.values():
+        repo_items.sort(key=lambda i: i["updated_at"], reverse=True)
+    picked: list[dict] = []
+    queues = list(by_repo.values())
+    index = 0
+    while len(picked) < cap and any(queues):
+        queue = queues[index % len(queues)]
+        if queue:
+            picked.append(queue.pop(0))
+        index += 1
+        if all(not q for q in queues):
+            break
+    return picked
 
 
 def _report_path(output_dir: Path, today: date) -> Path:
@@ -121,7 +139,28 @@ def _render_report(today, profile, candidates, recommendation, llm_error, sync_r
             lines.extend(_render_rec(rec, by_key.get((rec["repo"], rec["number"]))))
     if not recommendation["recommendations"]:
         lines.append("本次没有产出推荐。")
+    lines.extend(_render_skipped(recommendation.get("skipped", {})))
     return "\n".join(lines).rstrip() + "\n"
+
+
+SKIP_LABELS = {
+    "resource": "需要你没有的硬件/资源",
+    "occupied": "已有人在做",
+    "unclear": "信息不足，难判断",
+}
+
+
+def _render_skipped(skipped: dict) -> list[str]:
+    groups = [(SKIP_LABELS[cat], skipped.get(cat, [])) for cat in ("resource", "occupied", "unclear")]
+    groups = [(label, items) for label, items in groups if items]
+    if not groups:
+        return []
+    total = sum(len(items) for _, items in groups)
+    lines = ["", f"## 已跳过（{total}）", ""]
+    for label, items in groups:
+        refs = ", ".join(f"{i['repo']}#{i['number']}" for i in items)
+        lines.append(f"- {label}（{len(items)}）: {refs}")
+    return lines
 
 
 def _render_rec(rec: dict, candidate: dict | None) -> list[str]:

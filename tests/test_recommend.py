@@ -66,3 +66,31 @@ def test_normalize_counts_serendipity():
     }
     result = _normalize(raw, candidates)
     assert result["serendipity_count"] == 1
+
+
+def test_normalize_categorizes_skipped():
+    candidates = [make_candidate(number=n) for n in (1, 2, 3, 4)]
+    raw = {
+        "recommendations": [{"repo": "sgl-project/sglang", "number": 1, "priority": "high"}],
+        "skipped": [
+            {"repo": "sgl-project/sglang", "number": 2, "category": "resource"},
+            {"repo": "sgl-project/sglang", "number": 3, "category": "occupied"},
+            {"repo": "sgl-project/sglang", "number": 4, "category": "bogus"},  # → unclear
+        ],
+    }
+    result = _normalize(raw, candidates)
+    assert len(result["recommendations"]) == 1
+    assert result["skipped"]["resource"] == [{"repo": "sgl-project/sglang", "number": 2}]
+    assert result["skipped"]["occupied"] == [{"repo": "sgl-project/sglang", "number": 3}]
+    assert result["skipped"]["unclear"] == [{"repo": "sgl-project/sglang", "number": 4}]
+    assert result["skipped_count"] == 3
+
+
+def test_normalize_skips_item_already_recommended():
+    candidates = [make_candidate(number=1)]
+    raw = {
+        "recommendations": [{"repo": "sgl-project/sglang", "number": 1, "priority": "high"}],
+        "skipped": [{"repo": "sgl-project/sglang", "number": 1, "category": "resource"}],
+    }
+    result = _normalize(raw, candidates)
+    assert result["skipped_count"] == 0  # already in recommendations, not double-counted
