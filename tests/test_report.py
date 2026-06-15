@@ -153,6 +153,68 @@ def test_report_degrades_on_llm_failure(tmp_path, store, monkeypatch):
     assert "Tokenizer leak" in text  # raw candidates still listed
 
 
+def test_continue_items_bypass_llm_and_get_own_section(tmp_path, store, monkeypatch):
+    config = make_config(tmp_path)
+    service = service_with(store, config, [make_issue(1, title="Being worked"), make_issue(2, title="Fresh")])
+    service.sync()
+    service.decide("sgl-project/sglang", 1, "continue", "本地能复现，正在做")
+
+    captured = {}
+
+    def fake_recommend(llm, profile, candidates):
+        captured["c"] = candidates
+        from osmind.services.recommend import _normalize
+        return _normalize({"recommendations": [], "skipped": []}, candidates)
+
+    monkeypatch.setattr("osmind.services.report.recommend", fake_recommend)
+
+    result = run_report(service, notify=False)
+    # the continue item is NOT handed to the LLM
+    judged = {c["number"] for c in captured["c"]}
+    assert judged == {2}
+    assert result["continuing"] == 1
+
+    text = Path(result["path"]).read_text(encoding="utf-8")
+    assert "## 你在跟进的（continue）" in text
+    assert "Being worked" in text
+    assert "本地能复现，正在做" in text
+
+
+def test_continue_item_flags_upstream_change(tmp_path, store, monkeypatch):
+    config = make_config(tmp_path)
+    service = service_with(store, config, [make_issue(1, title="Watch me")])
+    service.sync()
+    service.decide("sgl-project/sglang", 1, "continue", "doing it")
+    # upstream gains a comment after the decision → content hash moves
+    service._client.issues = [make_issue(1, title="Watch me", updated_at="2026-06-20T00:00:00")]
+    service._client.issues[0].comment_count = 3
+    service.sync()
+
+    monkeypatch.setattr(
+        "osmind.services.report.recommend",
+        lambda llm, profile, candidates: {"recommendations": [], "skipped": {}, "serendipity_count": 0, "skipped_count": 0},
+    )
+    result = run_report(service, notify=False)
+    text = Path(result["path"]).read_text(encoding="utf-8")
+    assert "⚠️ 上游有更新" in text
+
+
+def test_deterministic_summary_replaces_llm_summary(tmp_path, store, monkeypatch):
+    config = make_config(tmp_path)
+    service = service_with(store, config, [make_issue(1, title="A")])
+    fake_reco = {
+        "summary": "含 iatrogenic 项",  # hallucinated model summary must NOT appear
+        "recommendations": [
+            {"repo": "sgl-project/sglang", "number": 1, "priority": "high", "reason": "r", "serendipity": False},
+        ],
+    }
+    monkeypatch.setattr("osmind.services.report.recommend", lambda llm, profile, candidates: _normalized(fake_reco, candidates))
+    result = run_report(service, notify=False)
+    text = Path(result["path"]).read_text(encoding="utf-8")
+    assert "iatrogenic" not in text
+    assert "推荐 1 条 · serendipity 0 条 · 跟进中 0 条 · 跳过 0 条" in text
+
+
 def test_report_excludes_discarded_unchanged_items(tmp_path, store, monkeypatch):
     config = make_config(tmp_path)
     service = service_with(store, config, [make_issue(1), make_issue(2)])

@@ -58,7 +58,8 @@ def _format_text(command: str, result) -> str:
     if command == "report":
         lines = [
             f"wrote {result['path']}",
-            f"  candidates: {result['candidates']}  recommendations: {result['recommendations']}  serendipity: {result['serendipity']}",
+            f"  recommendations: {result['recommendations']}  serendipity: {result['serendipity']}"
+            f"  continuing: {result['continuing']}  skipped: {result['skipped']}  (candidates judged: {result['candidates']})",
             f"  notified: {result['notified']}",
         ]
         if result["llm_error"]:
