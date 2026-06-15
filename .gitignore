@@ -6,3 +6,4 @@ profile.yaml
 dist/
 *.egg-info/
 .worktrees/
+.venv/

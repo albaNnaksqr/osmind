@@ -19,9 +19,6 @@ DEFAULT_PROFILE_LOCATIONS = (
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
 
-    if args.command in {"init", "doctor", "tui"}:
-        return _delegate_to_legacy(args)
-
     try:
         config = _load_config(args.profile)
         service = _build_service(config, with_client=args.command in {"sync", "digest"})
@@ -132,18 +129,6 @@ def _load_config(profile: Path | None) -> Config:
     )
 
 
-def _delegate_to_legacy(args: argparse.Namespace) -> int:
-    from osmind.tui import app as legacy_app
-
-    legacy_argv: list[str] = []
-    if args.profile is not None:
-        legacy_argv.extend(["--profile", str(args.profile)])
-    if args.command in {"init", "doctor"}:
-        legacy_argv.append(args.command)
-    legacy_app.main(legacy_argv)
-    return 0
-
-
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="osmind", description="Watch repos, remember decisions, feed agents.")
     parser.add_argument("--profile", type=Path, default=None, help="Path to profile.yaml")
@@ -173,10 +158,6 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
     profile = sub.add_parser("profile", help="Show interests, skills, resources, and watched repos")
     profile.add_argument("--json", action="store_true")
-
-    sub.add_parser("tui", help="Launch the legacy TUI")
-    sub.add_parser("init", help="Create a profile.yaml interactively (legacy)")
-    sub.add_parser("doctor", help="Check profile and runtime prerequisites (legacy)")
 
     return parser.parse_args(argv)
 
