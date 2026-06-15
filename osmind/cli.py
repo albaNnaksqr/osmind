@@ -57,11 +57,14 @@ def _dispatch(args: argparse.Namespace, service: RadarService):
 def _format_text(command: str, result) -> str:
     if command == "digest":
         counts = result["counts"]
-        return (
-            f"wrote {result['path']}\n"
-            f"  new: {result['new']}  resurfaced: {result['resurfaced']}  continue changed: {result['continue_changed']}\n"
-            f"  active queue: {counts['active']} (undecided {counts['undecided']}, continue {counts['continue']}, resurfaced {counts['resurfaced']})"
-        )
+        lines = [
+            f"wrote {result['path']}",
+            f"  new: {result['new']}  resurfaced: {result['resurfaced']}  continue changed: {result['continue_changed']}",
+            f"  active queue: {counts['active']} (undecided {counts['undecided']}, continue {counts['continue']}, resurfaced {counts['resurfaced']})",
+        ]
+        for error in result.get("errors", []):
+            lines.append(f"  skipped {error['repo']}: {error['error']}")
+        return "\n".join(lines)
     if command == "sync":
         lines = []
         for repo in result["repos"]:
@@ -70,6 +73,8 @@ def _format_text(command: str, result) -> str:
             lines.append(
                 f"{repo['repo']}: {repo['fetched']} fetched | new: {new} | changed: {changed} | {repo['unchanged']} unchanged"
             )
+        for error in result.get("errors", []):
+            lines.append(f"{error['repo']}: SKIPPED — {error['error']}")
         return "\n".join(lines) if lines else "nothing watched"
     if command == "queue":
         if not result:

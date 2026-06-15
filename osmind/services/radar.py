@@ -33,9 +33,14 @@ class RadarService:
     def sync(self, limit: int = 30) -> dict:
         client = self._require_client()
         repos: list[dict] = []
+        errors: list[dict] = []
         for watched in self.config.watching:
             repo = watched["repo"]
-            issues = client.get_issues(repo, limit=limit, include_comments=True)
+            try:
+                issues = client.get_issues(repo, limit=limit, include_comments=True)
+            except Exception as error:  # network, auth, rate limit — keep cron alive
+                errors.append({"repo": repo, "error": _fetch_error_message(error)})
+                continue
             new: list[int] = []
             changed: list[int] = []
             unchanged = 0
@@ -62,7 +67,10 @@ class RadarService:
                     "unchanged": unchanged,
                 }
             )
-        return {"synced_at": _now(), "repos": repos}
+        if errors and not repos:
+            detail = "; ".join(f"{e['repo']}: {e['error']}" for e in errors)
+            raise RadarError(f"all repo fetches failed — {detail}")
+        return {"synced_at": _now(), "repos": repos, "errors": errors}
 
     def queue(self, status_filter: str = "active") -> list[dict]:
         if status_filter not in QUEUE_FILTERS:
@@ -202,6 +210,13 @@ def _parse_json(raw: str, fallback):
         return json.loads(raw)
     except json.JSONDecodeError:
         return fallback
+
+
+def _fetch_error_message(error: Exception) -> str:
+    text = str(error)
+    if "rate limit" in text.lower() or "403" in text:
+        return "GitHub rate limit hit — set GITHUB_TOKEN for a higher limit"
+    return f"{type(error).__name__}: {text}".strip()
 
 
 def _now() -> str:

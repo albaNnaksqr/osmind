@@ -192,6 +192,42 @@ def test_legacy_pack_decisions_seed_decision_history(tmp_path):
     assert items[0]["status"] == "deferred"
 
 
+class RateLimitedClient:
+    def __init__(self, ok_repo=None, ok_issues=None):
+        self.ok_repo = ok_repo
+        self.ok_issues = ok_issues or []
+
+    def get_issues(self, repo, state="open", limit=30, include_comments=False):
+        if repo == self.ok_repo:
+            return self.ok_issues
+        raise RuntimeError("403 API rate limit exceeded for 47.x")
+
+
+def test_sync_records_per_repo_fetch_errors(tmp_path, store):
+    config = Config(
+        interests=["sglang"],
+        skills=["python"],
+        resources={},
+        watching=[{"repo": "sgl-project/sglang"}, {"repo": "THUDM/slime"}],
+        notes_vault=tmp_path / "out",
+    )
+    config.watching[1]["repo"] = "THUDM/slime"
+    service = RadarService(config, store, RateLimitedClient(ok_repo="sgl-project/sglang", ok_issues=[make_issue(1)]))
+
+    result = service.sync()
+    assert [r["repo"] for r in result["repos"]] == ["sgl-project/sglang"]
+    assert result["errors"][0]["repo"] == "THUDM/slime"
+    assert "rate limit" in result["errors"][0]["error"].lower()
+    assert "GITHUB_TOKEN" in result["errors"][0]["error"]
+
+
+def test_sync_raises_when_all_repos_fail(tmp_path, store):
+    config = make_config(tmp_path)
+    service = RadarService(config, store, RateLimitedClient(ok_repo=None))
+    with pytest.raises(RadarError, match="all repo fetches failed"):
+        service.sync()
+
+
 def test_parse_item_ref():
     assert parse_item_ref("sgl-project/sglang#42") == ("sgl-project/sglang", 42)
     for bad in ("sglang#42", "sgl-project/sglang", "sgl-project/sglang#x"):

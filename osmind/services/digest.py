@@ -39,7 +39,9 @@ def run_digest(service: RadarService, limit: int = 30) -> dict:
 
     today = date.today()
     path = _weekly_path(service.config.vault, today)
-    section = _render_section(today, service, new_items, resurfaced, changed_continue, counts)
+    section = _render_section(
+        today, service, new_items, resurfaced, changed_continue, counts, sync_result.get("errors", [])
+    )
     _write_section(path, today, section)
 
     return {
@@ -49,6 +51,7 @@ def run_digest(service: RadarService, limit: int = 30) -> dict:
         "resurfaced": len(resurfaced),
         "continue_changed": len(changed_continue),
         "counts": counts,
+        "errors": sync_result.get("errors", []),
     }
 
 
@@ -64,6 +67,7 @@ def _render_section(
     resurfaced: list[dict],
     changed_continue: list[dict],
     counts: dict,
+    errors: list[dict],
 ) -> str:
     lines = [
         f"## {today.isoformat()}",
@@ -71,6 +75,12 @@ def _render_section(
         f"Active 队列 {counts['active']}（undecided {counts['undecided']} · continue {counts['continue']} · resurfaced {counts['resurfaced']}）",
         "",
     ]
+    if errors:
+        lines.append("### 抓取失败（本次未更新）")
+        lines.append("")
+        for error in errors:
+            lines.append(f"- {error['repo']}: {error['error']}")
+        lines.append("")
     if not new_items and not resurfaced and not changed_continue:
         lines.extend(["本次 sync 无新增、无复活、continue 项无变化。", ""])
         return "\n".join(lines)
