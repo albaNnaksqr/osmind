@@ -6,9 +6,7 @@ import os
 import sys
 from pathlib import Path
 
-from osmind.cache.store import CacheStore
 from osmind.config import Config, ConfigError
-from osmind.services.radar import QUEUE_FILTERS, RadarError, RadarService, parse_item_ref
 
 DEFAULT_PROFILE_LOCATIONS = (
     Path("profile.yaml"),
@@ -18,14 +16,19 @@ DEFAULT_PROFILE_LOCATIONS = (
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
-
     try:
         config = _load_config(args.profile)
-        service = _build_service(config, with_client=args.command in {"sync", "report"})
-        result = _dispatch(args, service)
-    except (ConfigError, RadarError, FileNotFoundError) as error:
+        result = _dispatch(args, config)
+    except (ConfigError, FileNotFoundError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
+    except Exception as error:  # report/LLM/network failures surface cleanly
+        from osmind.services.report import ReportError
+
+        if isinstance(error, ReportError):
+            print(f"error: {error}", file=sys.stderr)
+            return 1
+        raise
 
     if getattr(args, "json", False):
         print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -34,24 +37,21 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _dispatch(args: argparse.Namespace, service: RadarService):
-    if args.command == "sync":
-        return service.sync(limit=args.limit)
+def _dispatch(args: argparse.Namespace, config: Config):
     if args.command == "report":
+        from osmind.github.client import GitHubClient
         from osmind.services.report import run_report
 
-        return run_report(service, limit=args.limit, notify=not args.no_notify)
-    if args.command == "queue":
-        return service.queue(args.filter)
-    if args.command == "show":
-        repo, number = parse_item_ref(args.item)
-        return service.show(repo, number)
-    if args.command == "decide":
-        repo, number = parse_item_ref(args.item)
-        return service.decide(repo, number, args.decision, args.reason)
+        client = GitHubClient(os.environ.get("GITHUB_TOKEN", ""))
+        return run_report(config, client, limit=args.limit, notify=not args.no_notify)
     if args.command == "profile":
-        return service.profile()
-    raise RadarError(f"Unknown command: {args.command}")
+        return {
+            "interests": config.interests,
+            "skills": config.skills,
+            "resources": config.resources,
+            "watching": [w["repo"] for w in config.watching],
+        }
+    raise ValueError(f"Unknown command: {args.command}")
 
 
 def _format_text(command: str, result) -> str:
@@ -59,62 +59,15 @@ def _format_text(command: str, result) -> str:
         lines = [
             f"wrote {result['path']}",
             f"  recommendations: {result['recommendations']}  serendipity: {result['serendipity']}"
-            f"  continuing: {result['continuing']}  skipped: {result['skipped']}  (candidates judged: {result['candidates']})",
+            f"  skipped: {result['skipped']}  (candidates judged: {result['candidates']})",
             f"  notified: {result['notified']}",
         ]
         if result["llm_error"]:
             lines.append(f"  LLM error: {result['llm_error']}")
         return "\n".join(lines)
-    if command == "sync":
-        lines = []
-        for repo in result["repos"]:
-            new = ", ".join(f"#{n}" for n in repo["new"]) or "none"
-            changed = ", ".join(f"#{n}" for n in repo["changed"]) or "none"
-            lines.append(
-                f"{repo['repo']}: {repo['fetched']} fetched | new: {new} | changed: {changed} | {repo['unchanged']} unchanged"
-            )
-        for error in result.get("errors", []):
-            lines.append(f"{error['repo']}: SKIPPED — {error['error']}")
-        return "\n".join(lines) if lines else "nothing watched"
-    if command == "queue":
-        if not result:
-            return "queue is empty"
-        lines = []
-        for item in result:
-            marker = item["status"]
-            if item["status"] == "resurfaced":
-                marker += f" ({', '.join(item['resurfaced_because'])})"
-            lines.append(f"{item['repo']}#{item['number']}  [{marker}]  {item['title']}")
-        return "\n".join(lines)
-    if command == "show":
-        lines = [
-            f"{result['repo']}#{result['number']}: {result['title']}",
-            f"{result['url']}",
-            f"status: {result['status']}  labels: {', '.join(result['labels']) or 'none'}  updated: {result['updated_at']}",
-        ]
-        for entry in result["decision_log"]:
-            lines.append(f"  - {entry['decided_at']} {entry['decision']}: {entry['reason']}")
-        lines.extend(["", result["body"] or "(no body)"])
-        for comment in result["comments"]:
-            lines.extend(["", f"--- {comment.get('author', '')} ({comment.get('created_at', '')})", comment.get("body", "")])
-        return "\n".join(lines)
-    if command == "decide":
-        mirrored = f" (mirrored to {result['mirrored_to']})" if result.get("mirrored_to") else ""
-        return f"{result['repo']}#{result['number']} → {result['decision']}: {result['reason']}{mirrored}"
     if command == "profile":
         return json.dumps(result, ensure_ascii=False, indent=2)
     return str(result)
-
-
-def _build_service(config: Config, *, with_client: bool) -> RadarService:
-    cache_path = config.output_dir / "osmind" / ".cache" / "osmind.db"
-    store = CacheStore(cache_path)
-    client = None
-    if with_client:
-        from osmind.github.client import GitHubClient
-
-        client = GitHubClient(os.environ.get("GITHUB_TOKEN", ""))
-    return RadarService(config, store, client)
 
 
 def _load_config(profile: Path | None) -> Config:
@@ -135,32 +88,14 @@ def _load_config(profile: Path | None) -> Config:
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog="osmind", description="Watch repos, remember decisions, feed agents.")
+    parser = argparse.ArgumentParser(prog="osmind", description="Push a contribution shortlist from watched repos.")
     parser.add_argument("--profile", type=Path, default=None, help="Path to profile.yaml")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sync = sub.add_parser("sync", help="Fetch watched repos and update the local store")
-    sync.add_argument("--limit", type=int, default=30, help="Max open issues per repo")
-    sync.add_argument("--json", action="store_true")
-
-    report = sub.add_parser("report", help="Sync, judge contributability via LLM, write a report and notify")
+    report = sub.add_parser("report", help="Fetch, judge contributability via LLM, write a report and notify")
     report.add_argument("--limit", type=int, default=30, help="Max open issues per repo")
     report.add_argument("--no-notify", action="store_true", help="Skip the macOS notification")
     report.add_argument("--json", action="store_true")
-
-    queue = sub.add_parser("queue", help="List watched items with decision state")
-    queue.add_argument("--filter", choices=QUEUE_FILTERS, default="active")
-    queue.add_argument("--json", action="store_true")
-
-    show = sub.add_parser("show", help="Show one item with body, comments, and decision log")
-    show.add_argument("item", help="<owner>/<name>#<number>")
-    show.add_argument("--json", action="store_true")
-
-    decide = sub.add_parser("decide", help="Record a decision for an item")
-    decide.add_argument("item", help="<owner>/<name>#<number>")
-    decide.add_argument("decision", choices=["continue", "defer", "discard"])
-    decide.add_argument("--reason", required=True, help="Why — future-you will read this")
-    decide.add_argument("--json", action="store_true")
 
     profile = sub.add_parser("profile", help="Show interests, skills, resources, and watched repos")
     profile.add_argument("--json", action="store_true")

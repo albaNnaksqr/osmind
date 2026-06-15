@@ -7,7 +7,6 @@ def make_candidate(repo="sgl-project/sglang", number=1, title="Fix cache", **sig
         "labels": ["bug"],
         "assignees": [],
         "comment_count": 3,
-        "participant_count": 2,
         "linked_open_prs": [],
         "updated_at": "2026-06-10T00:00:00",
     }
@@ -18,7 +17,6 @@ def make_candidate(repo="sgl-project/sglang", number=1, title="Fix cache", **sig
         "title": title,
         "body": "some body text",
         "signals": signals,
-        "prior_decision": None,
     }
 
 
@@ -31,14 +29,6 @@ def test_prompt_includes_signals_and_serendipity_instruction():
     assert "assignees=bob" in prompt
     assert "1 x Spark" in prompt
     assert "未按兴趣预筛" in prompt  # candidate set is not interest-filtered
-
-
-def test_prompt_surfaces_prior_decision():
-    profile = {"interests": [], "skills": [], "resources": {}}
-    candidate = make_candidate()
-    candidate["prior_decision"] = {"decision": "defer", "reason": "缺集群"}
-    prompt = build_user_prompt(profile, [candidate])
-    assert "你以前 defer 过 — 缺集群" in prompt
 
 
 def test_normalize_drops_hallucinated_issues():

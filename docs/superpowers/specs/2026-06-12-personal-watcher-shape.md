@@ -2,6 +2,26 @@
 
 Date: 2026-06-12
 
+## Revision 2 — 2026-06-15: drop the memory layer; pure stateless push
+
+After the scheduled report landed (revision 1 below), the decision/memory layer
+was cut entirely: no continue/defer/discard, no resurface rule, no SQLite store,
+no `sync`/`queue`/`show`/`decide` commands, no vault decision-log mirror.
+
+Why: the report only judges the ~30 most recently active issues per repo. For a
+busy repo that's a thin, fast-churning slice, so remembering past judgments buys
+little — rejected issues fall out of the window on their own, and anything the
+user starts working on auto-drops because its PR/assignee appears in the
+objective signals (the `occupied` skip). The user's verdict: "osmind 只需要做到
+给我推送就好了，已经没有必要记住我之前的判断."
+
+osmind is now stateless: `osmind report` fetches → enriches with signals → one
+LLM judgment → Markdown report in `output_dir/reports/` + macOS notification.
+The only other command is `osmind profile`. Source dropped to ~850 lines.
+
+Everything below (revision 1 and the original spec) is superseded and kept only
+as design history.
+
 ## Revision 2026-06-15: judgment moves back in, as a scheduled push
 
 The first cut of this spec deleted judgment entirely and made the automated

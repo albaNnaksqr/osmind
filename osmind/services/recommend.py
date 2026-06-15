@@ -62,14 +62,11 @@ def build_user_prompt(profile: dict, candidates: list[dict]) -> str:
         lines.append(f"### {item['repo']}#{item['number']} {item['title']}")
         lines.append(f"- labels: {', '.join(signals['labels']) or 'none'}")
         lines.append(
-            f"- 客观信号: comments={signals['comment_count']}, participants={signals['participant_count']}, "
+            f"- 客观信号: comments={signals['comment_count']}, "
             f"assignees={', '.join(signals['assignees']) or 'none'}, "
             f"open_pr={'yes #' + ','.join(map(str, signals['linked_open_prs'])) if signals['linked_open_prs'] else 'no'}, "
             f"last_update={signals['updated_at'] or 'unknown'}"
         )
-        if item.get("prior_decision"):
-            prior = item["prior_decision"]
-            lines.append(f"- 历史决策: 你以前 {prior['decision']} 过 — {prior['reason']}")
         body = (item.get("body") or "").strip().replace("\r", "")
         if body:
             lines.append(f"- 摘要: {body[:BODY_TRUNCATE]}")

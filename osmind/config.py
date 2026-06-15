@@ -32,7 +32,6 @@ class Config:
     llm: LLMConfig | None = None
     external_agents: AgentConfig | None = None
     output_dir: Path | None = None
-    vault: Path | None = None  # Obsidian vault root for digests and decision-log mirrors
 
     def __post_init__(self) -> None:
         if self.output_dir is None:
@@ -68,7 +67,6 @@ class Config:
             if agents_data
             else None
         )
-        vault_raw = data.get("vault")
         return cls(
             interests=data["interests"],
             skills=data["skills"],
@@ -78,5 +76,4 @@ class Config:
             llm=llm,
             external_agents=agents,
             output_dir=output_dir,
-            vault=Path(vault_raw).expanduser() if vault_raw else None,
         )

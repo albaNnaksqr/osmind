@@ -34,12 +34,11 @@ class GHIssue:
 
 @dataclass
 class IssueSignals:
-    """Objective, contribution-relevant facts fetched live at report time."""
+    """Objective, contribution-relevant facts assembled at report time."""
     number: int
     labels: list[str] = field(default_factory=list)
     assignees: list[str] = field(default_factory=list)
     comment_count: int = 0
-    participant_count: int = 0
     linked_open_prs: list[int] = field(default_factory=list)
     updated_at: str = ""
 

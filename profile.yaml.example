@@ -15,15 +15,9 @@ resources:
 
 watching:
   - repo: THUDM/slime
-    path: ~/workspace/slime        # optional local checkout for repo-grounded packets
-    issue_limit: 100               # optional; defaults to 30
   - repo: sgl-project/sglang
-    path: ~/workspace/sglang
 
-output_dir: ~/workspace/osmind-packets   # SQLite cache + reports/ live here
-# Legacy configs can still use notes_vault instead of output_dir.
-
-vault: ~/workspace/Note   # optional Obsidian vault root; only the decision-log mirror lands here (Sources/Issue_Radar/Decision_Log.md)
+output_dir: ~/workspace/osmind-packets   # reports/ are written here
 
 # Required for `osmind report` — the LLM that judges contributability.
 # OpenAI-compatible endpoint (SGLang local, DeepSeek, OpenAI, etc.).

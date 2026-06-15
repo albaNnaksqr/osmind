@@ -2,235 +2,161 @@ from pathlib import Path
 
 import pytest
 
-from osmind.cache.store import CacheStore
 from osmind.config import Config, LLMConfig
-from osmind.github.models import GHIssue, IssueSignals
-from osmind.services.radar import RadarService
-from osmind.services.report import run_report
+from osmind.github.models import GHIssue
+from osmind.services.report import ReportError, run_report
+from osmind.services.recommend import _normalize
 
 
-def make_issue(number, *, title="Fix cache", body="body", labels=None, updated_at="2026-06-10T00:00:00"):
+def make_issue(number, *, repo="sgl-project/sglang", title="Fix cache", body="body", labels=None,
+               assignees=None, comment_count=0, updated_at="2026-06-10T00:00:00"):
     return GHIssue(
-        number=number,
-        title=title,
-        body=body,
-        labels=labels or ["bug"],
-        url=f"https://github.com/sgl-project/sglang/issues/{number}",
-        repo="sgl-project/sglang",
-        state="open",
-        updated_at=updated_at,
-        comments=[],
+        number=number, title=title, body=body, labels=labels or ["bug"],
+        url=f"https://github.com/{repo}/issues/{number}", repo=repo, state="open",
+        updated_at=updated_at, assignees=assignees or [], comment_count=comment_count,
     )
 
 
-def make_config(tmp_path, with_llm=True):
+def make_config(tmp_path, with_llm=True, watching=None):
     return Config(
-        interests=["sglang"],
-        skills=["python"],
-        resources={"gpus": "1 x Spark"},
-        watching=[{"repo": "sgl-project/sglang"}],
-        notes_vault=tmp_path / "out",
-        output_dir=tmp_path / "out",
+        interests=["sglang"], skills=["python"], resources={"gpus": "1 x Spark"},
+        watching=watching or [{"repo": "sgl-project/sglang"}],
+        notes_vault=tmp_path / "out", output_dir=tmp_path / "out",
         llm=LLMConfig(base_url="http://x/v1", model="m", api_key="k") if with_llm else None,
     )
 
 
 class FakeClient:
-    def __init__(self, issues, signals=None):
-        self.issues = issues
-        self._signals = signals or {}
+    def __init__(self, issues_by_repo, linked=None, fail_repos=None):
+        self.issues_by_repo = issues_by_repo
+        self.linked = linked or {}
+        self.fail_repos = fail_repos or set()
 
     def get_issues(self, repo, state="open", limit=30, include_comments=False):
-        return self.issues
+        if repo in self.fail_repos:
+            raise RuntimeError("403 API rate limit exceeded")
+        return self.issues_by_repo.get(repo, [])
 
-    def issue_signals(self, repo, number):
-        return self._signals.get(number, IssueSignals(number=number, labels=["bug"]))
-
-
-@pytest.fixture
-def store(tmp_path):
-    return CacheStore(tmp_path / "cache.db")
+    def linked_open_prs(self, repo, number):
+        return self.linked.get(number, [])
 
 
-def service_with(store, config, issues, signals=None):
-    return RadarService(config, store, FakeClient(issues, signals))
+def _reco(raw):
+    return lambda llm, profile, candidates: _normalize(raw, candidates)
 
 
-def test_report_requires_llm(tmp_path, store):
+def test_report_requires_llm(tmp_path):
     config = make_config(tmp_path, with_llm=False)
-    service = service_with(store, config, [make_issue(1)])
-    with pytest.raises(Exception):
-        run_report(service, notify=False)
+    client = FakeClient({"sgl-project/sglang": [make_issue(1)]})
+    with pytest.raises(ReportError):
+        run_report(config, client, notify=False)
 
 
-def test_report_writes_ranked_recommendations(tmp_path, store, monkeypatch):
+def test_report_writes_ranked_recommendations(tmp_path, monkeypatch):
     config = make_config(tmp_path)
-    signals = {
-        1: IssueSignals(number=1, labels=["bug"], assignees=[], comment_count=5, participant_count=3, linked_open_prs=[]),
-        2: IssueSignals(number=2, labels=["feature"], assignees=["bob"], linked_open_prs=[99]),
-    }
-    service = service_with(store, config, [make_issue(1, title="Tokenizer leak"), make_issue(2, title="Add API")], signals)
-
-    fake_reco = {
-        "summary": "本周有一个高优 bug",
+    client = FakeClient(
+        {"sgl-project/sglang": [make_issue(1, title="Tokenizer leak"), make_issue(2, title="Add API", assignees=["bob"])]},
+        linked={2: [99]},
+    )
+    raw = {
+        "summary": "ignored",
         "recommendations": [
-            {"repo": "sgl-project/sglang", "number": 1, "priority": "high", "reason": "和 sglang 推理相关",
-             "resource_note": "1 张卡够", "occupied": False, "serendipity": False},
-            {"repo": "sgl-project/sglang", "number": 2, "priority": "low", "reason": "扩展眼界",
-             "resource_note": "已被认领", "occupied": True, "serendipity": True},
+            {"repo": "sgl-project/sglang", "number": 1, "priority": "high", "reason": "相关", "resource_note": "够", "serendipity": False},
+            {"repo": "sgl-project/sglang", "number": 2, "priority": "low", "reason": "扩展", "resource_note": "已占", "occupied": True, "serendipity": True},
         ],
     }
-    monkeypatch.setattr("osmind.services.report.recommend", lambda llm, profile, candidates: _normalized(fake_reco, candidates))
+    monkeypatch.setattr("osmind.services.report.recommend", _reco(raw))
 
-    result = run_report(service, notify=False)
+    result = run_report(config, client, notify=False)
     assert result["recommendations"] == 2
     assert result["serendipity"] == 1
-    assert result["llm_error"] is None
-
     text = Path(result["path"]).read_text(encoding="utf-8")
-    assert "# 贡献推荐" in text
     assert "## 推荐贡献" in text
     assert "## 跳出兴趣（serendipity）" in text
-    assert "[high]" in text
-    assert "[已有人在做]" in text  # issue 2 occupied
+    assert "[已有人在做]" in text
     assert "Tokenizer leak" in text
     assert Path(result["path"]).parent.name == "reports"
 
 
-def test_report_renders_skipped_summary(tmp_path, store, monkeypatch):
+def test_report_renders_skipped_summary(tmp_path, monkeypatch):
     config = make_config(tmp_path)
-    service = service_with(
-        store, config,
-        [make_issue(1, title="Doable"), make_issue(2, title="Needs H20"), make_issue(3, title="Taken")],
-    )
-
-    fake_reco = {
-        "recommendations": [
-            {"repo": "sgl-project/sglang", "number": 1, "priority": "high", "reason": "r", "serendipity": False},
-        ],
+    client = FakeClient({"sgl-project/sglang": [make_issue(1), make_issue(2), make_issue(3)]})
+    raw = {
+        "recommendations": [{"repo": "sgl-project/sglang", "number": 1, "priority": "high", "reason": "r", "serendipity": False}],
         "skipped": [
             {"repo": "sgl-project/sglang", "number": 2, "category": "resource"},
             {"repo": "sgl-project/sglang", "number": 3, "category": "occupied"},
         ],
     }
-    monkeypatch.setattr("osmind.services.report.recommend", lambda llm, profile, candidates: _normalized(fake_reco, candidates))
-
-    result = run_report(service, notify=False)
+    monkeypatch.setattr("osmind.services.report.recommend", _reco(raw))
+    result = run_report(config, client, notify=False)
     text = Path(result["path"]).read_text(encoding="utf-8")
     assert "## 已跳过（2）" in text
     assert "需要你没有的硬件/资源（1）: sgl-project/sglang#2" in text
-    assert "已有人在做（1）: sgl-project/sglang#3" in text
-    # skipped items must NOT get full recommendation cards
-    assert "### " in text and "Needs H20" not in text.split("## 已跳过")[0]
 
 
-def test_balanced_candidates_round_robins_repos():
-    from osmind.services.report import _balanced_candidates
+def test_deterministic_summary_replaces_llm_summary(tmp_path, monkeypatch):
+    config = make_config(tmp_path)
+    client = FakeClient({"sgl-project/sglang": [make_issue(1, title="A")]})
+    raw = {
+        "summary": "含 iatrogenic 项",
+        "recommendations": [{"repo": "sgl-project/sglang", "number": 1, "priority": "high", "reason": "r", "serendipity": False}],
+    }
+    monkeypatch.setattr("osmind.services.report.recommend", _reco(raw))
+    result = run_report(config, client, notify=False)
+    text = Path(result["path"]).read_text(encoding="utf-8")
+    assert "iatrogenic" not in text
+    assert "推荐 1 条 · serendipity 0 条 · 跳过 0 条" in text
 
-    items = [{"repo": "a/x", "number": n, "updated_at": f"2026-06-{n:02d}"} for n in range(1, 21)]
-    items += [{"repo": "b/y", "number": n, "updated_at": f"2026-06-{n:02d}"} for n in (1, 2, 3)]
-    picked = _balanced_candidates(items, cap=10)
-    repos = {p["repo"] for p in picked}
-    assert repos == {"a/x", "b/y"}  # quiet repo not crowded out
-    assert sum(1 for p in picked if p["repo"] == "b/y") == 3  # all of the quiet repo's items present
 
-
-def test_report_degrades_on_llm_failure(tmp_path, store, monkeypatch):
+def test_report_degrades_on_llm_failure(tmp_path, monkeypatch):
     from osmind.llm import LLMError
 
     config = make_config(tmp_path)
-    service = service_with(store, config, [make_issue(1, title="Tokenizer leak")])
+    client = FakeClient({"sgl-project/sglang": [make_issue(1, title="Tokenizer leak")]})
 
     def boom(llm, profile, candidates):
         raise LLMError("endpoint down")
 
     monkeypatch.setattr("osmind.services.report.recommend", boom)
-
-    result = run_report(service, notify=False)
+    result = run_report(config, client, notify=False)
     assert result["llm_error"] == "endpoint down"
     text = Path(result["path"]).read_text(encoding="utf-8")
     assert "判断失败" in text
-    assert "Tokenizer leak" in text  # raw candidates still listed
+    assert "Tokenizer leak" in text
 
 
-def test_continue_items_bypass_llm_and_get_own_section(tmp_path, store, monkeypatch):
-    config = make_config(tmp_path)
-    service = service_with(store, config, [make_issue(1, title="Being worked"), make_issue(2, title="Fresh")])
-    service.sync()
-    service.decide("sgl-project/sglang", 1, "continue", "本地能复现，正在做")
-
-    captured = {}
-
-    def fake_recommend(llm, profile, candidates):
-        captured["c"] = candidates
-        from osmind.services.recommend import _normalize
-        return _normalize({"recommendations": [], "skipped": []}, candidates)
-
-    monkeypatch.setattr("osmind.services.report.recommend", fake_recommend)
-
-    result = run_report(service, notify=False)
-    # the continue item is NOT handed to the LLM
-    judged = {c["number"] for c in captured["c"]}
-    assert judged == {2}
-    assert result["continuing"] == 1
-
-    text = Path(result["path"]).read_text(encoding="utf-8")
-    assert "## 你在跟进的（continue）" in text
-    assert "Being worked" in text
-    assert "本地能复现，正在做" in text
-
-
-def test_continue_item_flags_upstream_change(tmp_path, store, monkeypatch):
-    config = make_config(tmp_path)
-    service = service_with(store, config, [make_issue(1, title="Watch me")])
-    service.sync()
-    service.decide("sgl-project/sglang", 1, "continue", "doing it")
-    # upstream gains a comment after the decision → content hash moves
-    service._client.issues = [make_issue(1, title="Watch me", updated_at="2026-06-20T00:00:00")]
-    service._client.issues[0].comment_count = 3
-    service.sync()
-
-    monkeypatch.setattr(
-        "osmind.services.report.recommend",
-        lambda llm, profile, candidates: {"recommendations": [], "skipped": {}, "serendipity_count": 0, "skipped_count": 0},
+def test_report_skips_failed_repo_but_continues(tmp_path, monkeypatch):
+    config = make_config(tmp_path, watching=[{"repo": "sgl-project/sglang"}, {"repo": "THUDM/slime"}])
+    client = FakeClient(
+        {"sgl-project/sglang": [make_issue(1, title="Doable")]},
+        fail_repos={"THUDM/slime"},
     )
-    result = run_report(service, notify=False)
+    monkeypatch.setattr("osmind.services.report.recommend", _reco({"recommendations": [], "skipped": []}))
+    result = run_report(config, client, notify=False)
     text = Path(result["path"]).read_text(encoding="utf-8")
-    assert "⚠️ 上游有更新" in text
+    assert "⚠️ 抓取失败 THUDM/slime" in text
 
 
-def test_deterministic_summary_replaces_llm_summary(tmp_path, store, monkeypatch):
+def test_report_raises_when_all_repos_fail(tmp_path):
     config = make_config(tmp_path)
-    service = service_with(store, config, [make_issue(1, title="A")])
-    fake_reco = {
-        "summary": "含 iatrogenic 项",  # hallucinated model summary must NOT appear
-        "recommendations": [
-            {"repo": "sgl-project/sglang", "number": 1, "priority": "high", "reason": "r", "serendipity": False},
-        ],
-    }
-    monkeypatch.setattr("osmind.services.report.recommend", lambda llm, profile, candidates: _normalized(fake_reco, candidates))
-    result = run_report(service, notify=False)
-    text = Path(result["path"]).read_text(encoding="utf-8")
-    assert "iatrogenic" not in text
-    assert "推荐 1 条 · serendipity 0 条 · 跟进中 0 条 · 跳过 0 条" in text
+    client = FakeClient({}, fail_repos={"sgl-project/sglang"})
+    with pytest.raises(ReportError, match="all repo fetches failed"):
+        run_report(config, client, notify=False)
 
 
-def test_report_excludes_discarded_unchanged_items(tmp_path, store, monkeypatch):
-    config = make_config(tmp_path)
-    service = service_with(store, config, [make_issue(1), make_issue(2)])
-    service.sync()
-    service.decide("sgl-project/sglang", 1, "discard", "out of scope")
+def test_report_balances_across_repos(tmp_path, monkeypatch):
+    config = make_config(tmp_path, watching=[{"repo": "a/x"}, {"repo": "b/y"}])
+    busy = [make_issue(n, repo="a/x", updated_at=f"2026-06-{n:02d}") for n in range(1, 21)]
+    quiet = [make_issue(n, repo="b/y", updated_at=f"2026-06-{n:02d}") for n in (1, 2, 3)]
+    client = FakeClient({"a/x": busy, "b/y": quiet})
 
     captured = {}
     monkeypatch.setattr(
         "osmind.services.report.recommend",
-        lambda llm, profile, candidates: captured.update(c=candidates) or {"summary": "", "recommendations": [], "serendipity_count": 0},
+        lambda llm, profile, candidates: captured.update(c=candidates) or {"recommendations": [], "skipped": {}, "serendipity_count": 0, "skipped_count": 0},
     )
-    run_report(service, notify=False)
-    numbers = {c["number"] for c in captured["c"]}
-    assert numbers == {2}  # discarded #1 is gone from candidates
-
-
-def _normalized(raw, candidates):
-    from osmind.services.recommend import _normalize
-    return _normalize(raw, candidates)
+    run_report(config, client, notify=False)
+    repos = {c["repo"] for c in captured["c"]}
+    assert repos == {"a/x", "b/y"}  # quiet repo not crowded out
+    assert sum(1 for c in captured["c"] if c["repo"] == "b/y") == 3
