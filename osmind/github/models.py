@@ -33,6 +33,26 @@ class GHIssue:
 
 
 @dataclass
+class IssueSignals:
+    """Objective, contribution-relevant facts fetched live at report time."""
+    number: int
+    labels: list[str] = field(default_factory=list)
+    assignees: list[str] = field(default_factory=list)
+    comment_count: int = 0
+    participant_count: int = 0
+    linked_open_prs: list[int] = field(default_factory=list)
+    updated_at: str = ""
+
+    @property
+    def has_open_pr(self) -> bool:
+        return bool(self.linked_open_prs)
+
+    @property
+    def is_claimed(self) -> bool:
+        return bool(self.assignees) or self.has_open_pr
+
+
+@dataclass
 class PRFile:
     filename: str
     patch: str          # raw unified diff

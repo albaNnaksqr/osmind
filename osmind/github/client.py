@@ -1,6 +1,6 @@
 from __future__ import annotations
 from github import Github
-from osmind.github.models import GHComment, GHIssue, GHPR, PRFile
+from osmind.github.models import GHComment, GHIssue, GHPR, IssueSignals, PRFile
 
 
 GITHUB_TIMEOUT_SECONDS = 10
@@ -58,6 +58,43 @@ class GitHubClient:
                 comment_count=i.comments or 0,
             ))
         return issues
+
+    def issue_signals(self, repo: str, number: int) -> IssueSignals:
+        """Objective contribution signals: who's on it, is there already a PR, how busy."""
+        r = self._gh.get_repo(repo)
+        issue = r.get_issue(number)
+        participants = set()
+        if issue.user:
+            participants.add(issue.user.login)
+        for a in issue.assignees or []:
+            if a:
+                participants.add(a.login)
+        linked_open_prs: list[int] = []
+        try:
+            for event in issue.get_timeline():
+                if getattr(event, "event", "") != "cross-referenced":
+                    continue
+                source = getattr(event, "source", None)
+                source_issue = getattr(source, "issue", None) if source else None
+                if source_issue is None or getattr(source_issue, "pull_request", None) is None:
+                    continue
+                if getattr(source_issue, "state", "") == "open":
+                    linked_open_prs.append(source_issue.number)
+                actor = getattr(event, "actor", None)
+                if actor:
+                    participants.add(actor.login)
+        except Exception:
+            # timeline is best-effort; absence of PR data must not fail the report
+            pass
+        return IssueSignals(
+            number=number,
+            labels=[l.name for l in issue.labels],
+            assignees=[a.login for a in (issue.assignees or []) if a],
+            comment_count=issue.comments or 0,
+            participant_count=len(participants),
+            linked_open_prs=sorted(set(linked_open_prs)),
+            updated_at=_iso(issue.updated_at),
+        )
 
     def get_pr(self, repo: str, number: int) -> GHPR:
         r = self._gh.get_repo(repo)

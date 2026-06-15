@@ -21,7 +21,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         config = _load_config(args.profile)
-        service = _build_service(config, with_client=args.command in {"sync", "digest"})
+        service = _build_service(config, with_client=args.command in {"sync", "report"})
         result = _dispatch(args, service)
     except (ConfigError, RadarError, FileNotFoundError) as error:
         print(f"error: {error}", file=sys.stderr)
@@ -37,10 +37,10 @@ def main(argv: list[str] | None = None) -> int:
 def _dispatch(args: argparse.Namespace, service: RadarService):
     if args.command == "sync":
         return service.sync(limit=args.limit)
-    if args.command == "digest":
-        from osmind.services.digest import run_digest
+    if args.command == "report":
+        from osmind.services.report import run_report
 
-        return run_digest(service, limit=args.limit)
+        return run_report(service, limit=args.limit, notify=not args.no_notify)
     if args.command == "queue":
         return service.queue(args.filter)
     if args.command == "show":
@@ -55,15 +55,14 @@ def _dispatch(args: argparse.Namespace, service: RadarService):
 
 
 def _format_text(command: str, result) -> str:
-    if command == "digest":
-        counts = result["counts"]
+    if command == "report":
         lines = [
             f"wrote {result['path']}",
-            f"  new: {result['new']}  resurfaced: {result['resurfaced']}  continue changed: {result['continue_changed']}",
-            f"  active queue: {counts['active']} (undecided {counts['undecided']}, continue {counts['continue']}, resurfaced {counts['resurfaced']})",
+            f"  candidates: {result['candidates']}  recommendations: {result['recommendations']}  serendipity: {result['serendipity']}",
+            f"  notified: {result['notified']}",
         ]
-        for error in result.get("errors", []):
-            lines.append(f"  skipped {error['repo']}: {error['error']}")
+        if result["llm_error"]:
+            lines.append(f"  LLM error: {result['llm_error']}")
         return "\n".join(lines)
     if command == "sync":
         lines = []
@@ -143,9 +142,10 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     sync.add_argument("--limit", type=int, default=30, help="Max open issues per repo")
     sync.add_argument("--json", action="store_true")
 
-    digest = sub.add_parser("digest", help="Sync, then write a Markdown digest into the vault")
-    digest.add_argument("--limit", type=int, default=30, help="Max open issues per repo")
-    digest.add_argument("--json", action="store_true")
+    report = sub.add_parser("report", help="Sync, judge contributability via LLM, write a report and notify")
+    report.add_argument("--limit", type=int, default=30, help="Max open issues per repo")
+    report.add_argument("--no-notify", action="store_true", help="Skip the macOS notification")
+    report.add_argument("--json", action="store_true")
 
     queue = sub.add_parser("queue", help="List watched items with decision state")
     queue.add_argument("--filter", choices=QUEUE_FILTERS, default="active")

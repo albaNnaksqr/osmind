@@ -2,6 +2,37 @@
 
 Date: 2026-06-12
 
+## Revision 2026-06-15: judgment moves back in, as a scheduled push
+
+The first cut of this spec deleted judgment entirely and made the automated
+output a deterministic, dumb digest written into the Obsidian vault, with all
+ranking pushed to a pull-based `issue-radar` skill the user invokes manually.
+
+Real use killed that design. The dumb vault digest was just collection — it
+violated the vault's own "knowledge, not inbox" bar (Paper Radar entries record
+papers the user *engaged with*; a 36-issue keyword dump does not). And the
+skill made judgment pull-based when the user wanted **push**.
+
+Corrected shape (what the code now implements):
+
+- The judgment is **back inside an automated, scheduled command** (`osmind report`,
+  cron Mon/Thu), not a skill the user opens. The user wants the recommendation to
+  arrive, not to go ask for it.
+- Judgment is an **LLM call fed objective signals** — linked open PRs, assignees,
+  participant/comment counts, staleness — plus resources, interests, and decision
+  history. This is strictly more than the old ranker (which saw only issue text).
+- It must include **1-2 serendipity picks** outside the user's interests, so the
+  candidate set fed to the LLM is *not* interest-pre-filtered.
+- Output is a Markdown report in `output_dir/reports/`, **never the vault**, plus a
+  **macOS notification**. Only the user's own decisions mirror to the vault
+  (`Sources/Issue_Radar/Decision_Log.md`).
+- The deterministic `digest` command is deleted; `report` degrades to a raw
+  candidate list when the LLM is unreachable, so cron survives.
+
+The state layer below (store, decisions, resurface rule) is unchanged and is the
+input to the judgment. Sections below describe the superseded first cut; the
+revision above governs.
+
 ## Summary
 
 osmind becomes a headless repository watcher and decision-state store for a single user. It stops embedding judgment (ranking prose, briefs, grounding) and stops owning an interactive UI. General agents (Claude Code, Codex) supply the judgment; osmind supplies what agents lack: continuous observation and durable decision memory.
