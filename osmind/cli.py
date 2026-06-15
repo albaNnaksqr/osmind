@@ -24,7 +24,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         config = _load_config(args.profile)
-        service = _build_service(config, with_client=args.command == "sync")
+        service = _build_service(config, with_client=args.command in {"sync", "digest"})
         result = _dispatch(args, service)
     except (ConfigError, RadarError, FileNotFoundError) as error:
         print(f"error: {error}", file=sys.stderr)
@@ -40,6 +40,10 @@ def main(argv: list[str] | None = None) -> int:
 def _dispatch(args: argparse.Namespace, service: RadarService):
     if args.command == "sync":
         return service.sync(limit=args.limit)
+    if args.command == "digest":
+        from osmind.services.digest import run_digest
+
+        return run_digest(service, limit=args.limit)
     if args.command == "queue":
         return service.queue(args.filter)
     if args.command == "show":
@@ -54,6 +58,13 @@ def _dispatch(args: argparse.Namespace, service: RadarService):
 
 
 def _format_text(command: str, result) -> str:
+    if command == "digest":
+        counts = result["counts"]
+        return (
+            f"wrote {result['path']}\n"
+            f"  new: {result['new']}  resurfaced: {result['resurfaced']}  continue changed: {result['continue_changed']}\n"
+            f"  active queue: {counts['active']} (undecided {counts['undecided']}, continue {counts['continue']}, resurfaced {counts['resurfaced']})"
+        )
     if command == "sync":
         lines = []
         for repo in result["repos"]:
@@ -141,6 +152,10 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     sync = sub.add_parser("sync", help="Fetch watched repos and update the local store")
     sync.add_argument("--limit", type=int, default=30, help="Max open issues per repo")
     sync.add_argument("--json", action="store_true")
+
+    digest = sub.add_parser("digest", help="Sync, then write a Markdown digest into the vault")
+    digest.add_argument("--limit", type=int, default=30, help="Max open issues per repo")
+    digest.add_argument("--json", action="store_true")
 
     queue = sub.add_parser("queue", help="List watched items with decision state")
     queue.add_argument("--filter", choices=QUEUE_FILTERS, default="active")
