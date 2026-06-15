@@ -106,94 +106,49 @@ def test_cache_round_trips_issue_recommendation_dimensions(tmp_path: Path):
     assert cached[0].actionability == "low"
 
 
-def test_cache_round_trips_issue_brief(tmp_path: Path):
+def test_content_hash_tracks_comment_count_without_comment_bodies(tmp_path: Path):
+    from osmind.cache.store import issue_content_signature
+
+    def issue(comment_count, updated_at):
+        return GHIssue(
+            number=42, title="Tokenizer leak", body="grows", labels=["bug"],
+            url="https://github.com/o/r/issues/42", repo="o/r", state="open",
+            updated_at=updated_at, comment_count=comment_count,
+        )
+
+    # no comment bodies fetched, yet a new comment (count bump) changes the hash
+    base = issue_content_signature(issue(0, "u42"))[3]
+    more_comments = issue_content_signature(issue(1, "u43"))[3]
+    same_again = issue_content_signature(issue(0, "u42"))[3]
+
+    assert base != more_comments
+    assert base == same_again
+
+
+def test_upsert_preserves_cached_comments_on_list_only_refresh(tmp_path: Path):
     store = CacheStore(tmp_path / "osmind.db")
-    issue = GHIssue(
-        number=42,
-        title="Tokenizer leak",
-        body="The tokenizer cache keeps growing.",
-        labels=["bug"],
-        url="https://github.com/o/r/issues/42",
-        repo="o/r",
-        state="open",
-        updated_at="u42",
+    from osmind.github.models import GHComment
+
+    with_comments = GHIssue(
+        number=42, title="Tokenizer leak", body="grows", labels=["bug"],
+        url="https://github.com/o/r/issues/42", repo="o/r", state="open",
+        updated_at="u42", comment_count=1,
+        comments=[GHComment(author="alice", body="same here", url="", created_at="t")],
     )
-    brief_json = '{"summary": "Tokenizer cache grows without bounds."}'
-
-    store.upsert_issue(issue)
-    store.update_issue_brief("o/r", 42, brief_json)
-
-    assert store.get_issue_brief("o/r", 42) == brief_json
-
-
-def test_cache_preserves_issue_brief_for_identical_issue_refresh(tmp_path: Path):
-    store = CacheStore(tmp_path / "osmind.db")
-    issue = GHIssue(
-        number=42,
-        title="Tokenizer leak",
-        body="The tokenizer cache keeps growing.",
-        labels=["bug"],
-        url="https://github.com/o/r/issues/42",
-        repo="o/r",
-        state="open",
-        updated_at="u42",
-    )
-    refreshed_issue = GHIssue(
-        number=42,
-        title="Tokenizer leak",
-        body="The tokenizer cache keeps growing.",
-        labels=["bug"],
-        url="https://github.com/o/r/issues/42",
-        repo="o/r",
-        state="open",
-        updated_at="u43",
-    )
-    brief_json = '{"summary": "Tokenizer cache grows without bounds."}'
-
-    store.upsert_issue(issue)
-    store.update_issue_brief("o/r", 42, brief_json)
-    store.upsert_issue(refreshed_issue)
-
-    assert store.get_issue_brief("o/r", 42) == brief_json
-
-
-def test_cache_clears_issue_brief_when_issue_body_changes(tmp_path: Path):
-    store = CacheStore(tmp_path / "osmind.db")
-    issue = GHIssue(
-        number=42,
-        title="Tokenizer leak",
-        body="The tokenizer cache keeps growing.",
-        labels=["bug"],
-        url="https://github.com/o/r/issues/42",
-        repo="o/r",
-        state="open",
-        updated_at="u42",
-    )
-    changed_issue = GHIssue(
-        number=42,
-        title="Tokenizer leak",
-        body="The tokenizer cache was fixed.",
-        labels=["bug"],
-        url="https://github.com/o/r/issues/42",
-        repo="o/r",
-        state="open",
-        updated_at="u43",
+    list_only = GHIssue(
+        number=42, title="Tokenizer leak", body="grows", labels=["bug"],
+        url="https://github.com/o/r/issues/42", repo="o/r", state="open",
+        updated_at="u43", comment_count=2, comments=[],  # no bodies fetched this round
     )
 
-    store.upsert_issue(issue)
-    store.update_issue_brief("o/r", 42, '{"summary": "Old brief."}')
-    store.upsert_issue(changed_issue)
+    store.upsert_issue(with_comments)
+    store.upsert_issue(list_only)
 
-    assert store.get_issue_brief("o/r", 42) == ""
-
-
-def test_cache_returns_empty_issue_brief_for_missing_issue(tmp_path: Path):
-    store = CacheStore(tmp_path / "osmind.db")
-
-    assert store.get_issue_brief("o/r", 404) == ""
+    item = store.get_item("o/r", "issue", 42)
+    assert "alice" in item["comments_json"]  # cached body kept, not wiped
 
 
-def test_cache_migrates_existing_github_items_with_issue_brief_column(tmp_path: Path):
+def test_cache_migrates_legacy_github_items_with_comment_count_column(tmp_path: Path):
     db_path = tmp_path / "osmind.db"
     conn = sqlite3.connect(db_path)
     conn.execute(
@@ -240,8 +195,8 @@ def test_cache_migrates_existing_github_items_with_issue_brief_column(tmp_path: 
     store = CacheStore(db_path)
 
     columns = {row["name"] for row in store._conn.execute("PRAGMA table_info(github_items)").fetchall()}
-    assert "brief_json" in columns
-    assert store.get_issue_brief("o/r", 42) == ""
+    assert "comment_count" in columns
+    assert store.get_item("o/r", "issue", 42) is not None
 
 
 def test_cache_reports_issue_fetch_and_rank_activity(tmp_path: Path):

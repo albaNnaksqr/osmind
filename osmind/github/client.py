@@ -3,8 +3,8 @@ from github import Github
 from osmind.github.models import GHComment, GHIssue, GHPR, IssueSignals, PRFile
 
 
-GITHUB_TIMEOUT_SECONDS = 10
-GITHUB_RETRY_ATTEMPTS = 2
+GITHUB_TIMEOUT_SECONDS = 30
+GITHUB_RETRY_ATTEMPTS = 3
 
 
 def _iso(dt) -> str:

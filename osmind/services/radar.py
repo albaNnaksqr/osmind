@@ -37,7 +37,9 @@ class RadarService:
         for watched in self.config.watching:
             repo = watched["repo"]
             try:
-                issues = client.get_issues(repo, limit=limit, include_comments=True)
+                # list-only: change detection keys off comment_count + updated_at,
+                # so we skip the per-issue comment fetch that made sync fragile.
+                issues = client.get_issues(repo, limit=limit, include_comments=False)
             except Exception as error:  # network, auth, rate limit — keep cron alive
                 errors.append({"repo": repo, "error": _fetch_error_message(error)})
                 continue

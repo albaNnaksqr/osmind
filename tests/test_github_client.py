@@ -13,11 +13,12 @@ def client():
         return c
 
 
-def test_client_uses_short_github_retry_budget():
+def test_client_uses_patient_github_retry_budget():
     with patch("osmind.github.client.Github") as mock_gh:
         GitHubClient(token="fake-token")
 
-    mock_gh.assert_called_once_with("fake-token", timeout=10, retry=2)
+    # patient enough to ride out a flaky/slow network without failing the report
+    mock_gh.assert_called_once_with("fake-token", timeout=30, retry=3)
 
 
 def _make_mock_issue():

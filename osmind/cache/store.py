@@ -94,7 +94,7 @@ class CacheStore:
             "resource_fit": "TEXT NOT NULL DEFAULT 'unknown'",
             "actionability": "TEXT NOT NULL DEFAULT 'unknown'",
             "ranked_at": "TEXT NOT NULL DEFAULT ''",
-            "brief_json": "TEXT NOT NULL DEFAULT ''",
+            "comment_count": "INTEGER NOT NULL DEFAULT 0",
         }
         for column, definition in migrations.items():
             if column not in columns:
@@ -400,17 +400,12 @@ class CacheStore:
                 INSERT INTO github_items
                     (
                         repo, source_type, number, title, body_hash, content_hash,
-                        state, url, updated_at, body, labels_json, comments_json, score, reason
+                        state, url, updated_at, body, labels_json, comments_json,
+                        comment_count, score, reason
                     )
-                VALUES (?, 'issue', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, 'issue', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(repo, source_type, number) DO UPDATE SET
                     title = excluded.title,
-                    brief_json = CASE
-                        WHEN github_items.body_hash != excluded.body_hash
-                            OR github_items.content_hash != excluded.content_hash
-                        THEN ''
-                        ELSE github_items.brief_json
-                    END,
                     body_hash = excluded.body_hash,
                     content_hash = excluded.content_hash,
                     state = excluded.state,
@@ -418,7 +413,13 @@ class CacheStore:
                     updated_at = excluded.updated_at,
                     body = excluded.body,
                     labels_json = excluded.labels_json,
-                    comments_json = excluded.comments_json,
+                    -- keep cached comment bodies when this sync did not fetch them
+                    comments_json = CASE
+                        WHEN excluded.comments_json NOT IN ('[]', '')
+                        THEN excluded.comments_json
+                        ELSE github_items.comments_json
+                    END,
+                    comment_count = excluded.comment_count,
                     fetched_at = CURRENT_TIMESTAMP
                 """,
                 (
@@ -433,6 +434,7 @@ class CacheStore:
                     issue.body,
                     labels_json,
                     comments_json,
+                    issue.comment_count or len(issue.comments),
                     issue.score,
                     issue.reason,
                 ),
@@ -474,34 +476,6 @@ class CacheStore:
         except Exception:
             self._conn.rollback()
             raise
-
-    def update_issue_brief(self, repo: str, number: int, brief_json: str) -> None:
-        try:
-            self._conn.execute(
-                """
-                UPDATE github_items
-                SET brief_json = ?
-                WHERE repo = ? AND source_type = 'issue' AND number = ?
-                """,
-                (brief_json, repo, number),
-            )
-            self._conn.commit()
-        except Exception:
-            self._conn.rollback()
-            raise
-
-    def get_issue_brief(self, repo: str, number: int) -> str:
-        row = self._conn.execute(
-            """
-            SELECT brief_json
-            FROM github_items
-            WHERE repo = ? AND source_type = 'issue' AND number = ?
-            """,
-            (repo, number),
-        ).fetchone()
-        if row is None:
-            return ""
-        return str(row["brief_json"] or "")
 
     def list_issues(self, repo: str) -> list[GHIssue]:
         rows = self._conn.execute(
@@ -678,7 +652,10 @@ def issue_content_signature(issue: GHIssue) -> tuple[str, str, str, str]:
         ensure_ascii=False,
     )
     body_hash = _hash_text(issue.body)
-    content_hash = _hash_text(f"{labels_json}\n{comments_json}")
+    # Change-detection keys off comment count + freshness, not comment bodies, so a
+    # fast list-only sync (no per-comment fetch) still resurfaces on new activity.
+    comment_count = issue.comment_count or len(issue.comments)
+    content_hash = _hash_text(f"{labels_json}\n{comment_count}\n{issue.updated_at}")
     return labels_json, comments_json, body_hash, content_hash
 
 
