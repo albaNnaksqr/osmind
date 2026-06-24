@@ -61,9 +61,15 @@ These are facts, not opinions — they drive the "already taken / infeasible" ca
   - **MERGED / CLOSED** PR that fixes or supersedes it → likely **already resolved or
     obsolete** → skip. Especially for `[Investigation]` / `[Tracking]` / `[RFC]` issues
     whose predecessor PR is already merged — those are usually concluded.
-  - Only **issue** cross-references (no PR) → not occupying; note if it's a tracking umbrella.
+  - **Issue** cross-references (no PR): usually not occupying — **but check one hop.**
+    If a referenced sibling issue is itself a *fix/track* for the same root cause
+    (titles like `[Perf] Fix …`, `Fix …`, `[Tracking] …`), re-run this same query on
+    *that* issue. If the sibling has an open/merged PR, the candidate is **occupied by
+    proxy / superseded** → skip. (Real example: a bug `#774` had no PR of its own, but
+    its sibling fix-issue `#812` had open PR `#813` — the work was already underway.)
 
-  Run this only for the handful you're about to recommend.
+  Run this only for the handful you're about to recommend. Follow at most one hop —
+  don't recurse the whole reference graph.
 - **Local checkout** (optional): if a repo has a `path` **and it exists on disk**,
   you may grep/read it to judge feasibility more concretely (does the fix touch
   code I understand? how big is the surface?). Use it when an issue is borderline —
