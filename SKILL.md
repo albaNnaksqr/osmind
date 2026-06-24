@@ -70,6 +70,24 @@ These are facts, not opinions — they drive the "already taken / infeasible" ca
 
   Run this only for the handful you're about to recommend. Follow at most one hop —
   don't recurse the whole reference graph.
+
+- **Comment thread — READ the last few comments of every finalist.** The body never
+  admits an issue is dead; the thread does. An issue with 0 PRs and a clean title can
+  still be resolved, stale, or deflected. Skip/downgrade on:
+
+  ```bash
+  gh api repos/<owner/name>/issues/<number>/comments --paginate \
+    --jq '.[] | "@\(.user.login) (\(.created_at[0:10])): \(.body)"'
+  ```
+  - Reporter/others **root-cause it to upstream or another repo** and say it works
+    after a fix (e.g. "this is actually sglang #19335, applied the fix, results fine")
+    → likely **already resolved** → check that upstream issue's state; if closed, skip.
+  - A **fix/patch already posted in a comment** (gist, diff, "apply this") → the hard
+    work is done and the author will probably PR it → low value to duplicate.
+  - "**try latest / can't repro on main**" with no follow-up → likely **stale or fixed**
+    → re-verify against current `main` before investing.
+  - Maintainer **asked for info that never came**, or "**use X instead**" deflection
+    → wontfix-ish → skip.
 - **Local checkout** (optional): if a repo has a `path` **and it exists on disk**,
   you may grep/read it to judge feasibility more concretely (does the fix touch
   code I understand? how big is the surface?). Use it when an issue is borderline —
