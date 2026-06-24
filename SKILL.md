@@ -50,9 +50,10 @@ These are facts, not opinions — they drive the "already taken / infeasible" ca
 
   Don't run this for every candidate — only the ones you're about to recommend,
   to confirm they aren't occupied.
-- **Local checkout** (optional): if a repo has a `path`, you may grep/read it to
-  judge feasibility more concretely (does the fix touch code I understand? how big
-  is the surface?). Use it when an issue is borderline — don't crawl it for all.
+- **Local checkout** (optional): if a repo has a `path` **and it exists on disk**,
+  you may grep/read it to judge feasibility more concretely (does the fix touch
+  code I understand? how big is the surface?). Use it when an issue is borderline —
+  don't crawl it for all. If the path is missing, just skip it; never block on it.
 
 ### 3. Judge — the actual product
 
