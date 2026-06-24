@@ -38,18 +38,32 @@ doesn't crowd out a quiet one.
 These are facts, not opinions — they drive the "already taken / infeasible" calls:
 
 - **assignees**, **comment count**, **updatedAt** (staleness) come free from step 1.
-- **Linked open PRs** — for any issue that otherwise looks promising, check whether
-  someone already has an open PR on it:
+- **Linked PRs — by STATE, not just existence.** For any issue you're about to
+  recommend, look at the PRs that reference it *and their state*. Use GraphQL: it
+  catches both GitHub's "linked pull requests" sidebar (`closedByPullRequestsReferences`)
+  and plain cross-references. The REST `timeline` endpoint **misses the sidebar links**,
+  which is how occupied/closed issues slip through.
 
   ```bash
-  gh api repos/<owner/name>/issues/<number>/timeline \
-    --jq '[.[] | select(.event=="cross-referenced") | .source.issue
-           | select(.state=="open" and has("pull_request"))
-           | {number, title}]'
+  gh api graphql -f query='
+    query($o:String!,$n:String!,$num:Int!){ repository(owner:$o,name:$n){ issue(number:$num){
+      closedByPullRequestsReferences(first:10, includeClosedPrs:true){ nodes{ number state } }
+      timelineItems(itemTypes:[CROSS_REFERENCED_EVENT,CONNECTED_EVENT], first:80){ nodes{
+        ... on CrossReferencedEvent{ source{ ... on PullRequest{ number state } } }
+        ... on ConnectedEvent{ subject{ ... on PullRequest{ number state } } } } } } } }' \
+    -f o=<owner> -f n=<name> -F num=<number>
   ```
+  (zsh: pass owner/name/number as separate `-f`/`-F` flags — don't word-split a
+  `"repo num"` string, zsh won't split it and the number goes empty.)
 
-  Don't run this for every candidate — only the ones you're about to recommend,
-  to confirm they aren't occupied.
+  Judge by state:
+  - **OPEN** PR → occupied (someone's actively on it) → skip unless you'd add unique value.
+  - **MERGED / CLOSED** PR that fixes or supersedes it → likely **already resolved or
+    obsolete** → skip. Especially for `[Investigation]` / `[Tracking]` / `[RFC]` issues
+    whose predecessor PR is already merged — those are usually concluded.
+  - Only **issue** cross-references (no PR) → not occupying; note if it's a tracking umbrella.
+
+  Run this only for the handful you're about to recommend.
 - **Local checkout** (optional): if a repo has a `path` **and it exists on disk**,
   you may grep/read it to judge feasibility more concretely (does the fix touch
   code I understand? how big is the surface?). Use it when an issue is borderline —
