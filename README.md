@@ -43,13 +43,21 @@ ln -s ~/workspace/osmind ~/.claude/skills/osmind
 
 Then in Claude Code: *"跑一下 osmind"*.
 
-### Optional: scheduled push
+### Scheduled push (installed)
 
-This skill is pull. To push on a schedule, point a launchd job at a headless run
-twice a week:
+The skill is pull; the push is a launchd job that runs it headless Mon/Thu 09:00:
+
+- `~/Library/LaunchAgents/com.osmind.radar.plist` — the schedule (Weekday 1 & 4, 09:00).
+- `~/.config/osmind/run.sh` — wrapper: sets a full PATH for launchd, then runs
+  `claude -p "run the osmind skill" --allowedTools "Bash Read Write Skill"`.
+- `~/.cache/osmind/logs/osmind.log` — run log; `launchd.{out,err}` catch launchd-level errors.
+
+Manage it:
 
 ```bash
-claude -p "run the osmind skill" --allowedTools "Bash,Read,Write"
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.osmind.radar.plist  # load
+launchctl kickstart -p gui/$(id -u)/com.osmind.radar                            # run now
+launchctl bootout   gui/$(id -u)/com.osmind.radar                               # unload
 ```
 
 ## Legacy
