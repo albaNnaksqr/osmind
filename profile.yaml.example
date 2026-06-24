@@ -1,4 +1,6 @@
-# Copy to profile.yaml and fill in your values
+# Copy to ~/.config/osmind/profile.yaml and fill in your values.
+# No secrets: GitHub auth is handled by `gh` (keychain); the agent is the judge,
+# so there is no LLM key.
 
 interests:
   - RL post-training
@@ -15,13 +17,7 @@ resources:
 
 watching:
   - repo: THUDM/slime
+    path: ~/workspace/slime        # optional local checkout the agent may grep
   - repo: sgl-project/sglang
 
 output_dir: ~/workspace/osmind-packets   # reports/ are written here
-
-# Required for `osmind report` — the LLM that judges contributability.
-# OpenAI-compatible endpoint (SGLang local, DeepSeek, OpenAI, etc.).
-llm:
-  base_url: http://localhost:30000/v1
-  model: Qwen3.5-27B
-  api_key: sk-your-key-here

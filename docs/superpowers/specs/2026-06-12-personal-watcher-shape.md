@@ -2,6 +2,23 @@
 
 Date: 2026-06-12
 
+## Revision 3 — 2026-06-24: become a pure Claude Code skill
+
+Once the memory layer was gone (revision 2), osmind was a stateless
+"fetch → judge → present" pipeline — which is precisely what an agent does
+natively. The Python package had become a worse, fixed-prompt reimplementation of
+what Claude Code already does: it could only judge the payload it was fed, while an
+agent can `gh issue view`, read the linked PR, even grep a local checkout.
+
+So the whole package is replaced by a single `SKILL.md`. `gh` (keychain auth)
+replaces PyGithub + `GITHUB_TOKEN`; the agent itself replaces the DeepSeek
+judgment call, so there is no LLM key. Net: no secrets to manage, almost no code.
+The skill stays pull; an optional launchd job running `claude -p "run the osmind
+skill"` gives push twice a week. The Python CLI is recoverable at tag
+`v1-stateless-cli`.
+
+Everything below is superseded design history.
+
 ## Revision 2 — 2026-06-15: drop the memory layer; pure stateless push
 
 After the scheduled report landed (revision 1 below), the decision/memory layer

@@ -1,66 +1,61 @@
 # osmind
 
-A scheduled, stateless contribution-radar for the open-source repos I follow.
+A stateless contribution radar, packaged as a Claude Code **skill**.
 
-Twice a week, osmind fetches recent issues from my watched repos, asks an LLM which ones are actually worth contributing to — judged against my GPU/time resources, my interests, and objective facts (is someone already on it, how busy, how stale) — and pushes me a short ranked shortlist as a Markdown report plus a macOS notification. It deliberately slips in 1-2 picks *outside* my interests so I don't get stuck in my own bubble.
+Ask it ("跑一下 osmind" / "看看有什么能贡献的") and it fetches recent open issues from
+the repos I follow, judges which are actually worth contributing to — against my
+GPU/time resources, my interests, and objective facts (is someone already on it,
+how busy, how stale) — and writes a short ranked shortlist as a Markdown report
+plus a macOS notification. It always slips in 1–2 picks *outside* my interests so
+I don't get stuck in my own bubble.
 
-Personal tool. One user, one profile. No database, no memory of past decisions — every run is a fresh judgment of what's live right now.
+Personal tool. One user, one profile. No database, no memory of past decisions —
+every run is a fresh judgment of what's live right now.
 
-## Why stateless
+## Why a skill (not a program)
 
-An earlier version remembered my continue/defer/discard decisions and resurfaced issues when they changed. I cut all of it. The report only ever looks at the ~30 most recently active issues per repo — for a busy repo that's a thin, fast-churning slice, so remembering past judgments buys little: rejected issues churn out of the window on their own, and anything I start working on auto-drops because its PR/assignee shows up in the objective signals. The product is just the push.
+Once osmind went stateless, it stopped needing to be a program. A stateless
+"fetch → judge → present" pipeline is exactly what an agent does natively: the
+skill is the instructions, Claude Code is the runtime and the judge. That's
+*better* judgment than the old fixed-prompt LLM call — the agent can `gh issue
+view`, read the linked PR, even grep a local checkout — and there's almost no code
+to maintain. It also means no secrets to manage: GitHub auth is `gh`'s job
+(keychain), and there's no separate LLM key because the agent is the judge.
 
-## The report
-
-`osmind report` (cron, e.g. Mon/Thu) does the whole loop, no persistence:
-
-1. **fetch** recent open issues from each watched repo (list-only — robust on a slow network).
-2. **collect signals** — for each candidate, the linked open PRs (someone already on it?), plus assignees / comment count / staleness that come free with the issue.
-3. **judge** — one LLM call ranks contributability against my resources + interests + signals, drops what's infeasible or already taken into a collapsed "已跳过" summary, and picks 1-2 serendipity items outside my interests.
-4. **write + notify** — a Markdown report at `output_dir/reports/YYYY-MM-DD.md`, and a macOS notification with the headline.
-
-Reports live in osmind's own output dir, not a notes vault — a triage sweep is inbox-grade, not knowledge. Issues I actually decide to work on graduate into my vault as project notes, by hand.
-
-If the LLM is unreachable the report degrades to a raw candidate list instead of crashing; if a repo fetch fails it's skipped with a note. Cron stays alive.
-
-## CLI
-
-```bash
-osmind report           # the loop above (--no-notify to skip the notification, --json for machine output)
-osmind profile          # show interests, skills, resources, watched repos
-```
+The pipeline lives in [`SKILL.md`](SKILL.md): `gh` fetch → collect signals →
+judge → Markdown report + macOS notify. Reports land in `output_dir/reports/`,
+never the Obsidian vault — a triage sweep is inbox-grade, not knowledge.
 
 ## Setup
 
 ```bash
-pip install -e .          # deps: PyGithub, PyYAML (LLM calls go over stdlib urllib)
+gh auth login          # one-time; token goes to the macOS keychain
 ```
 
-`profile.yaml` (see `profile.yaml.example`):
+Copy [`profile.yaml.example`](profile.yaml.example) to `~/.config/osmind/profile.yaml`
+and fill in interests / skills / resources / watched repos / output_dir. No keys.
 
-```yaml
-interests: [sglang, slime, ai infra]
-skills: [python]
-resources:
-  gpus: 1 x Nvidia-Spark
-  time: part-time
-watching:
-  - repo: THUDM/slime
-  - repo: sgl-project/sglang
-output_dir: ~/workspace/osmind-packets   # reports/ written here
-llm:                                       # required — the contributability judge
-  base_url: http://localhost:30000/v1
-  model: DeepSeek-V4-Pro
-  api_key: sk-your-key-here
+Install the skill (symlink so git stays the source of truth):
+
+```bash
+ln -s ~/workspace/osmind ~/.claude/skills/osmind
 ```
 
-Set `GITHUB_TOKEN` (the fetch needs the API). Schedule Mon/Thu with launchd (or cron):
+Then in Claude Code: *"跑一下 osmind"*.
 
-```cron
-0 9 * * 1,4 cd ~/workspace/osmind && GITHUB_TOKEN=... .venv/bin/osmind report
+### Optional: scheduled push
+
+This skill is pull. To push on a schedule, point a launchd job at a headless run
+twice a week:
+
+```bash
+claude -p "run the osmind skill" --allowedTools "Bash,Read,Write"
 ```
 
 ## Legacy
 
-The old TUI / Learning-Pack / Contribution-Radar shapes, and the stateful
-decision-memory version, are tagged `v0-tui`.
+Earlier forms are recoverable by tag:
+- `v0-tui` — the TUI / Learning-Pack / Contribution-Radar shapes and the stateful
+  decision-memory version.
+- `v1-stateless-cli` — the stateless Python CLI (`osmind report` / `osmind profile`)
+  with a baked-in DeepSeek judgment call, before this pure-skill rewrite.
