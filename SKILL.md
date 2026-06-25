@@ -95,20 +95,38 @@ These are facts, not opinions — they drive the "already taken / infeasible" ca
 
 ### 3. Judge — the actual product
 
-Decide contributability by weighing three things together, NOT by literal
+Decide contributability by weighing these together, NOT by literal
 interest-keyword matching:
 
 1. **资源约束** — does it need hardware the user doesn't have (H20 / Blackwell /
    GB200 / multi-node / AMD / NPU …)? The user has: see `resources`. If it needs
    more than they have → not feasible.
-2. **兴趣与技能** — matches rank higher, but interest is not the only gate.
-3. **客观事实** — has an open PR / is assigned / heavily参与 / long stale.
+2. **可验证性 (verifiability)** — the sharpest gate, often sharper than "can I run
+   the model." Can the user close the **fix → prove it works** loop *on their own
+   hardware*? A fix they can't verify is nearly worthless: they can't confidently
+   submit it and maintainers won't merge an unverifiable patch. Three tiers:
+   - **self-verifiable** — reproducible/checkable on the user's box (small model on
+     the single Spark, or pure-code / zero-GPU: deps, docs, packaging, a localized
+     logic bug provable by a unit test). **Rank these highest.**
+   - **partially verifiable** — fix is code-level and reviewable, but full e2e repro
+     needs hardware they lack. Acceptable, but **say so explicitly** and note the
+     contribution path is "reasoned fix + reporter/maintainer verifies."
+   - **not locally verifiable** — only the reporter's rig (e.g. 8×H200 multimodal
+     MLA) can confirm. **Down-rank, and label the verification barrier.** Don't bury
+     these among normal recommendations. (Real example: #29008 was diagnosable and
+     fixable on paper but unverifiable on a single Spark — a poor fit despite being
+     "code-level.")
+3. **兴趣与技能** — matches rank higher, but interest is not the only gate.
+4. **客观事实** — has an open PR / is assigned / heavily参与 / long stale.
 
 Rules:
 
 - The recommended list holds only issues the user could **realistically pick up
   now**. 宁缺毋滥 — usually 5–10 is plenty. Each recommendation needs a concrete
-  reason and a resource verdict; if evidence is thin, say so.
+  reason, a resource verdict, and a **verification verdict** (self / partial / not
+  local); if evidence is thin, say so. **Order recommendations by verifiability
+  first** (self-verifiable on top), then priority — a closeable loop beats a
+  higher-impact bug the user can't prove fixed.
 - Move the rest into a **collapsed skipped summary** — do NOT write full cards for
   them. Bucket each as: `resource` (hardware they lack), `occupied` (open PR /
   assigned, and you see no unique value they'd add), or `unclear` (too little info).
@@ -138,8 +156,9 @@ Report shape:
 - 优先级: high|medium|low
 - 理由: ...
 - 资源: ...
+- 验证: self|partial|not-local — 怎么验、能不能在单卡 Spark 闭环
 
-（重复每一条；按优先级从高到低）
+（重复每一条；先按可验证性 self→partial→not-local，再按优先级从高到低）
 
 ## 跳出兴趣（serendipity）
 
