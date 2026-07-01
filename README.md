@@ -1,16 +1,40 @@
 # osmind
 
-A stateless contribution radar, packaged as a Claude Code **skill**.
+**osmind is a Claude Code skill for finding open-source issues that are actually
+worth your time right now.**
 
-Ask it ("跑一下 osmind" / "看看有什么能贡献的") and it fetches recent open issues from
-the repos I follow, judges which are actually worth contributing to — against my
-GPU/time resources, my interests, and objective facts (is someone already on it,
-how busy, how stale) — and writes a short ranked shortlist as a Markdown report
-plus a macOS notification. It always slips in 1–2 picks *outside* my interests so
-I don't get stuck in my own bubble.
+Ask it ("跑一下 osmind" / "看看有什么能贡献的") and it runs a contribution radar over
+the repos in your profile. It fetches recent open issues, checks whether the work
+is already occupied or stale, weighs each issue against your interests, skills,
+GPU/time resources, and local verifiability, then writes a short ranked Markdown
+report plus a macOS notification.
 
-Personal tool. One user, one profile. No database, no memory of past decisions —
-every run is a fresh judgment of what's live right now.
+The goal is not "find issues with matching keywords." The goal is: **give me a
+small set of contribution candidates I can realistically pick up and prove.**
+osmind also includes 1-2 serendipity picks outside your stated interests so the
+radar does not become a filter bubble.
+
+Personal tool. One user, one profile. No database, no memory of past decisions.
+Every run is a fresh judgment of what's live right now.
+
+## What it does
+
+- Fetches recent open issues from watched GitHub repos with `gh`.
+- Checks objective signals: assignees, comment count, staleness, linked PR state,
+  finalist comment threads, and one-hop proxy occupancy.
+- Optionally reads local checkouts when `watching[].path` exists, so the agent can
+  judge whether the likely fix is in familiar, testable code.
+- Ranks by **verifiability first**: self-verifiable work beats impressive issues
+  the user cannot prove fixed on their own hardware.
+- Writes a Chinese Markdown report to `<output_dir>/reports/YYYY-MM-DD.md` and
+  sends a macOS notification.
+
+## Example output
+
+See [`examples/report-2026-07-01.md`](examples/report-2026-07-01.md) for a real
+report snapshot. It shows the intended shape: a short recommendation list,
+serendipity picks, collapsed skip buckets, and notes about why candidates were
+downgraded.
 
 ## Why a skill (not a program)
 
@@ -22,8 +46,8 @@ view`, read the linked PR, even grep a local checkout — and there's almost no 
 to maintain. It also means no secrets to manage: GitHub auth is `gh`'s job
 (keychain), and there's no separate LLM key because the agent is the judge.
 
-The pipeline lives in [`SKILL.md`](SKILL.md): `gh` fetch → collect signals →
-judge → Markdown report + macOS notify. Reports land in `output_dir/reports/`,
+The pipeline lives in [`SKILL.md`](SKILL.md): `gh` fetch -> collect signals ->
+judge -> Markdown report + macOS notify. Reports land in `output_dir/reports/`,
 never the Obsidian vault — a triage sweep is inbox-grade, not knowledge.
 
 ## Setup
