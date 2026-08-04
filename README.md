@@ -21,7 +21,8 @@ Every run is a fresh judgment of what's live right now.
 
 - Fetches recent open issues from watched GitHub repos with `gh`.
 - Checks objective signals: assignees, comment count, staleness, linked PR state,
-  finalist comment threads, and one-hop proxy occupancy.
+  reverse searches over open PRs, author intent, finalist comment threads, and
+  one-hop proxy occupancy.
 - Optionally reads local checkouts when `watching[].path` exists, so the agent can
   judge whether the likely fix is in familiar, testable code.
 - Ranks by **verifiability first**: self-verifiable work beats impressive issues
