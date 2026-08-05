@@ -71,6 +71,45 @@ These are facts, not opinions — they drive the "already taken / infeasible" ca
   Run this only for the handful you're about to recommend. Follow at most one hop —
   don't recurse the whole reference graph.
 
+  **An empty result does NOT mean unclaimed.** Both
+  `closedByPullRequestsReferences` and `CROSS_REFERENCED_EVENT` depend on GitHub
+  recognizing a relationship. A PR whose body contains only a bare issue URL can
+  produce neither. This caused a real miss: slime#2245 was judged free while the
+  reporter's PR #2246 had already been open for three days. Always pair the linked
+  PR query with the reverse search below.
+
+- **Reverse PR search — look from the code back to the issue.** For every finalist,
+  sweep the repo's open PRs for work that overlaps the issue even when GitHub did not
+  link it:
+
+  ```bash
+  # Cheap first pass: search titles, authors, and branch names.
+  gh pr list --repo <owner/name> --state open --limit 60 \
+    --json number,title,author,createdAt,headRefName
+
+  # Confirm plausible matches by reading the body and touched files.
+  gh pr view <pr> --repo <owner/name> --json number,title,body,files
+  ```
+
+  Match on the issue's concrete vocabulary: symptom, API, file, function, or
+  subsystem. If an open PR addresses the same behavior or touches the same likely
+  fix surface, treat the issue as **occupied** and name the PR in the report. Do not
+  rely on issue numbers appearing in PR metadata.
+
+- **Author intent — the reporter is often the likely implementer.** Read the issue
+  body as well as its comments. Treat any of these as a claim signal even before a
+  PR exists:
+  - "I can/will open a PR", "happy to open a PR", or equivalent wording.
+  - "I've already written/tested the fix" or a patch/diff is already supplied.
+  - A complete line-level diagnosis plus proposed patch that reads like a pending PR.
+  - The reporter has the only hardware/artifacts needed to validate and says they
+    intend to do so.
+
+  Put these in `claimed`, not `occupied`: it is a softer judgment a human may
+  overrule. Quote the exact sentence that supports the claim. The exception is an
+  issue with multiple independent fixes where the author claimed only one; the
+  unclaimed half may still be recommended, but state the boundary explicitly.
+
 - **Comment thread — READ the last few comments of every finalist.** The body never
   admits an issue is dead; the thread does. An issue with 0 PRs and a clean title can
   still be resolved, stale, or deflected. Skip/downgrade on:
@@ -117,7 +156,10 @@ interest-keyword matching:
      fixable on paper but unverifiable on a single Spark — a poor fit despite being
      "code-level.")
 3. **兴趣与技能** — matches rank higher, but interest is not the only gate.
-4. **客观事实** — has an open PR / is assigned / heavily参与 / long stale.
+4. **客观事实** — has an open PR (linked or found by reverse search) / is assigned /
+   the author said they would fix it / heavily参与 / long stale. An issue is only
+   "free" after the linked-PR query, reverse PR search, and author-intent read all
+   pass. One of the three passing is not enough.
 
 Rules:
 
@@ -129,7 +171,9 @@ Rules:
   higher-impact bug the user can't prove fixed.
 - Move the rest into a **collapsed skipped summary** — do NOT write full cards for
   them. Bucket each as: `resource` (hardware they lack), `occupied` (open PR /
-  assigned, and you see no unique value they'd add), or `unclear` (too little info).
+  assigned, and you see no unique value they'd add), `claimed` (no PR yet, but the
+  author stated intent or already has the patch), `resolved` (the thread shows it
+  fixed elsewhere / not reproducible / wontfix), or `unclear` (too little info).
 - **Serendipity (required): include 1–2 picks deliberately OUTSIDE the user's
   interests** — something you find genuinely interesting or worth doing and that is
   resource-feasible, to break them out of their bubble. Because of this, do not
@@ -167,9 +211,11 @@ Report shape:
 - 资源: ...
 
 ## 已跳过（K 条）
-- 资源不可行: #a, #b, ...
-- 已有人在做 / 已指派: #c, ...
-- 信息不足: #d, ...
+- 已有 OPEN PR / 已指派: #a→PR #x, #b, ...
+- 作者已认领（无 PR）: #c —「支持这一判断的原话」, ...
+- 线程内已解决: #d, ...
+- 资源不可行: #e, #f, ...
+- 信息不足 / 未核验可行性: #g, ...
 
 ## 备注
 - （任何 fetch 失败的仓库写在这里）
@@ -197,6 +243,9 @@ Set that up only if the user asks — they may prefer to run it on demand.
 ## Don't
 
 - Don't invent issues — only ever recommend ones returned by `gh`.
+- Don't call an issue free from the linked-PR query alone. Empty means "nothing
+  linked", not "nobody is working on it". Pair it with the reverse PR search and
+  an author-intent read for every finalist.
 - Don't write to the Obsidian vault.
 - Don't store state between runs — there is no memory, by design.
 - Don't dump a long low-value list; the skipped summary is where the noise goes.
