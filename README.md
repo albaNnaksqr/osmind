@@ -91,8 +91,9 @@ fires while logged out) or a **launchd** agent on macOS.
 
 ## Legacy
 
-Earlier forms are recoverable by tag:
-- `v0-tui` — the TUI / Learning-Pack / Contribution-Radar shapes and the stateful
-  decision-memory version.
-- `v1-stateless-cli` — the stateless Python CLI (`osmind report` / `osmind profile`)
-  with a baked-in DeepSeek judgment call, before this pure-skill rewrite.
+Earlier forms live on branches, not tags:
+- `backup/v0-tui` — the TUI / Learning-Pack / Contribution-Radar shapes and the
+  stateful decision-memory version.
+- `backup/v1-stateless-cli` — the stateless Python CLI (`osmind report` /
+  `osmind profile`) with a baked-in DeepSeek judgment call, before this pure-skill
+  rewrite.
