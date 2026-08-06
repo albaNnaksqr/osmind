@@ -7,7 +7,7 @@ Ask it ("跑一下 osmind" / "看看有什么能贡献的") and it runs a contri
 the repos in your profile. It fetches recent open issues, checks whether the work
 is already occupied or stale, weighs each issue against your interests, skills,
 GPU/time resources, and local verifiability, then writes a short ranked Markdown
-report plus a macOS notification.
+report, a runnable task pack per self-verifiable pick, and a desktop notification.
 
 The goal is not "find issues with matching keywords." The goal is: **give me a
 small set of contribution candidates I can realistically pick up and prove.**
@@ -27,8 +27,13 @@ Every run is a fresh judgment of what's live right now.
   judge whether the likely fix is in familiar, testable code.
 - Ranks by **verifiability first**: self-verifiable work beats impressive issues
   the user cannot prove fixed on their own hardware.
-- Writes a Chinese Markdown report to `<output_dir>/reports/YYYY-MM-DD.md` and
-  sends a macOS notification.
+- Writes a Chinese Markdown report to `<output_dir>/reports/YYYY-MM-DD.md`.
+- Emits a **task pack** (`<output_dir>/packs/<slug>-<number>.md`) for each
+  self-verifiable pick: symptom, grounded root cause, fix scope with anti-gaming
+  guards, the concrete RED assertion, and the repo's prepared runtime. Plus a
+  `queue-YYYY-MM-DD.jsonl` that `batch_b/run_batch.py` can consume directly, so a
+  recommendation reaches a coding agent without being hand-rewritten.
+- Sends a desktop notification (`notify-send` on Linux, `osascript` on macOS).
 
 ## Example output
 
@@ -48,17 +53,21 @@ to maintain. It also means no secrets to manage: GitHub auth is `gh`'s job
 (keychain), and there's no separate LLM key because the agent is the judge.
 
 The pipeline lives in [`SKILL.md`](SKILL.md): `gh` fetch -> collect signals ->
-judge -> Markdown report + macOS notify. Reports land in `output_dir/reports/`,
-never the Obsidian vault — a triage sweep is inbox-grade, not knowledge.
+judge -> report -> task packs + queue -> notify. Reports and packs land under
+`output_dir/`, never the Obsidian vault — a triage sweep is inbox-grade, not
+knowledge.
 
 ## Setup
 
 ```bash
-gh auth login          # one-time; token goes to the macOS keychain
+gh auth login          # one-time; token goes to the OS credential store
 ```
 
 Copy [`profile.yaml.example`](profile.yaml.example) to `~/.config/osmind/profile.yaml`
 and fill in interests / skills / resources / watched repos / output_dir. No keys.
+For picks you want to hand straight to a coding agent, also set `work_path`, `base`
+and `env_note` on those repos — without them a pack still gets written, just no
+queue line.
 
 Install the skill (symlink so git stays the source of truth):
 
@@ -68,22 +77,17 @@ ln -s ~/workspace/osmind ~/.claude/skills/osmind
 
 Then in Claude Code: *"跑一下 osmind"*.
 
-### Scheduled push (installed)
+### Scheduled push (not installed on this host)
 
-The skill is pull; the push is a launchd job that runs it headless Mon/Thu 09:00:
-
-- `~/Library/LaunchAgents/com.osmind.radar.plist` — the schedule (Weekday 1 & 4, 09:00).
-- `~/.config/osmind/run.sh` — wrapper: sets a full PATH for launchd, then runs
-  `claude -p "run the osmind skill" --allowedTools "Bash Read Write Skill"`.
-- `~/.cache/osmind/logs/osmind.log` — run log; `launchd.{out,err}` catch launchd-level errors.
-
-Manage it:
+The skill is pull. To push it on a schedule, run it headless:
 
 ```bash
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.osmind.radar.plist  # load
-launchctl kickstart -p gui/$(id -u)/com.osmind.radar                            # run now
-launchctl bootout   gui/$(id -u)/com.osmind.radar                               # unload
+claude -p "run the osmind skill" --allowedTools "Bash,Read,Write"
 ```
+
+Wrap that in a script and drive it from a **systemd user timer** on Linux
+(`systemctl --user enable --now osmind.timer`, plus `loginctl enable-linger` so it
+fires while logged out) or a **launchd** agent on macOS.
 
 ## Legacy
 

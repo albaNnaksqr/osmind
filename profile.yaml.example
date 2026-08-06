@@ -17,7 +17,18 @@ resources:
 
 watching:
   - repo: THUDM/slime
-    path: ~/workspace/slime        # optional local checkout the agent may grep
+    # path      = read-only checkout, used ONLY to judge feasibility (grep/read).
+    # work_path = writable clone the batch runner branches a worktree from; this is
+    #             what lands in a queue line's "repo". Optional — without it you
+    #             still get a task pack, just no queue line.
+    # base      = branch/commit the worktree starts at (default: main).
+    # env_note  = prepared-runtime paragraph pasted verbatim into this repo's packs.
+    path: ~/.cache/osmind/checkouts/slime
+    work_path: ~/workspace/slime
+    base: main
+    env_note: >
+      The runtime is the docker image `slime-gb10:dev` — do NOT pip/conda install or
+      rebuild Megatron / TE / Apex. Mount the worktree over the image's source.
   - repo: sgl-project/sglang
 
-output_dir: ~/workspace/osmind-packets   # reports/ are written here
+output_dir: ~/workspace/osmind-packets   # reports/ and packs/ are written here
